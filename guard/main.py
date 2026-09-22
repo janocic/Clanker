@@ -5,15 +5,15 @@ import threading
 
 from . import devices, hotspot
 from .blocklist import Blocklist
-from .dns_proxy import DNSProxy
+from .dns_blocker import DNSBlocker
 
 
 def cmd_dns(args) -> None:
     bl = Blocklist()
-    proxy = DNSProxy(bind_ip=args.bind, port=args.port, upstream=args.upstream, blocklist=bl)
-    print(f"[guard] DNS proxy slusa na {args.bind}:{args.port}, upstream {args.upstream}")
+    blocker = DNSBlocker(blocklist=bl)
+    print("[guard] DNS blocker presrece udp/53 preko WinDivert-a (ICS i dalje rjesava dopusteno)")
     print(f"[guard] Blokirano {len(bl.domains)} domena, {len(bl.keywords)} kljucnih rijeci")
-    proxy.start_background()
+    blocker.start_background()
 
     if args.no_dashboard:
         print("[guard] Dashboard iskljucen, Ctrl+C za izlaz")
@@ -55,10 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="guard", description="CTF AI-blokada: DNS proxy i monitoring")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_dns = sub.add_parser("dns", help="Pokreni DNS proxy (+ dashboard)")
-    p_dns.add_argument("--bind", default="0.0.0.0")
-    p_dns.add_argument("--port", type=int, default=53)
-    p_dns.add_argument("--upstream", default="1.1.1.1")
+    p_dns = sub.add_parser("dns", help="Pokreni DNS blocker (+ dashboard). Zahtijeva Administrator shell.")
     p_dns.add_argument("--no-dashboard", action="store_true")
     p_dns.set_defaults(func=cmd_dns)
 

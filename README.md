@@ -2,7 +2,7 @@
 
 Mrežni alat za CTF natjecanja koja zabranjuju korištenje AI alata, ali
 dopuštaju normalan pristup internetu. Igrači se spajaju na hotspot koji
-kontrolira organizator; DNS proxy propušta sav promet osim upita prema
+kontrolira organizator; DNS blocker propušta sav promet osim upita prema
 poznatim AI servisima (ChatGPT, Claude, Gemini, Copilot, itd.), a
 terminal dashboard uživo prikazuje spojene uređaje i njihove DNS upite.
 
@@ -10,12 +10,28 @@ terminal dashboard uživo prikazuje spojene uređaje i njihove DNS upite.
 
 Rana faza / MVP za testiranje. Trenutno gotovo:
 
-- DNS proxy sa sinkhole listom AI domena i ključnih riječi (`guard/dns_proxy.py`)
+- DNS blocker sa sinkhole listom AI domena i ključnih riječi, presreće
+  promet preko WinDivert-a jer Windows ICS/Mobile Hotspot već drži port
+  53 (`guard/dns_blocker.py`) - vidi napomenu ispod
 - Terminal dashboard uživo: uređaji + zadnji DNS upiti (`guard/dashboard.py`)
 - ARP-based popis spojenih uređaja (`guard/devices.py`)
 - Legacy Windows hotspot helperi (`guard/hotspot.py`)
 - **Eksperimentalno**, još nije spojeno u dashboard: SNI-based traffic monitor
   preko WinDivert-a, hvata pokušaje i kad klijent zaobiđe DNS (`guard/traffic_monitor.py`)
+
+### Zašto WinDivert umjesto običnog DNS servera
+
+Prva verzija je pokušala vezati vlastiti DNS server na port 53. To ne
+radi na Windowsu čim je Mobile Hotspot uključen: usluga **Internet
+Connection Sharing (ICS)** koja pokreće hotspot već drži `0.0.0.0:53`
+za svoj interni DNS proxy, pa `bind()` puca s
+`WinError 10048 (Only one usage of each socket address...)`.
+`DNSBlocker` umjesto toga presreće UDP/53 pakete na mrežnom sloju prije
+nego stignu do ICS-a: blokirane upite tiho odbaci (klijent dobije
+timeout), sve ostalo propusti netaknuto pa ih ICS riješi kao inače. Zbog
+ovoga **nije potrebno ručno mijenjati DNS na hotspot adapteru** - ostavi
+ga na automatski, blocker radi neovisno o tome koji DNS klijent misli
+da koristi.
 
 ## Bitno ograničenje - pročitaj prije korištenja
 
@@ -65,20 +81,23 @@ kroz `netsh`, mora se ručno u GUI-ju).
 ### Opcija B - Mobile Hotspot (GUI, radi na svim novijim laptopima)
 
 1. Postavke > Mreža i internet > Mobile Hotspot > Uključi
-2. Otvori adapter "Local Area Connection* X" (virtualni hotspot adapter)
-   u Postavkama adaptera > Svojstva > IPv4 > ručno postavi DNS na
-   `127.0.0.1` (IP tvog laptopa na kojem vrtiš `guard`)
+2. To je sve - **ne diraj DNS postavke** adaptera, ostavi ih na
+   automatske. `DNSBlocker` presreće promet neovisno o tome (vidi
+   "Zašto WinDivert" gore).
 
 ## Pokretanje
+
+Mora ići u **Administrator** PowerShell-u (WinDivert driver traži
+povišene ovlasti):
 
 ```bash
 python -m guard.main dns
 ```
 
-Ovo diže DNS proxy na portu 53 i otvara dashboard. Spoji telefon na
-hotspot, otvori bilo koju normalnu stranicu (treba raditi), pa probaj
-`claude.ai` ili `chat.openai.com` (treba pasti / NXDOMAIN) - oba
-pokušaja trebaju se pojaviti u dashboardu s tvog telefona (MAC adresa).
+Spoji telefon na hotspot, otvori bilo koju normalnu stranicu (treba
+raditi), pa probaj `claude.ai` ili `chat.openai.com` (treba se zaglaviti
+/ timeout, nema instant NXDOMAIN u ovoj verziji) - oba pokušaja trebaju
+se pojaviti u dashboardu s tvog telefona (MAC adresa).
 
 Provjera spojenih uređaja bez dashboarda:
 

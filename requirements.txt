@@ -2,6 +2,8 @@ dnslib>=0.9.24
 rich>=13.7.0
 PyYAML>=6.0.1
 
-# Experimental (phase 2) - SNI-based traffic monitor. Requires WinDivert driver
-# (installed automatically by pydivert on Windows) and an Administrator shell.
+# Core dependency: DNS blocking intercepts packets via WinDivert instead of
+# binding port 53 directly, since Windows ICS/Mobile Hotspot already owns
+# that port system-wide. Bundles the WinDivert driver on Windows; needs an
+# Administrator shell to load it.
 pydivert>=2.1.0
