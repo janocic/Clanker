@@ -1,0 +1,7 @@
+dnslib>=0.9.24
+rich>=13.7.0
+PyYAML>=6.0.1
+
+# Experimental (phase 2) - SNI-based traffic monitor. Requires WinDivert driver
+# (installed automatically by pydivert on Windows) and an Administrator shell.
+pydivert>=2.1.0

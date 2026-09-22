@@ -1,0 +1,58 @@
+# AI blocklist for CTF competitions.
+#
+# domains: exact match or any subdomain (foo.bar.com matches "bar.com" entry)
+# keywords: substring match against the full queried hostname - catches
+#           subdomains/services not explicitly listed, at the cost of
+#           occasional false positives (review dashboard alerts, don't
+#           treat a hit alone as proof of AI use - see README limitations).
+
+domains:
+  - openai.com
+  - chatgpt.com
+  - chat.openai.com
+  - api.openai.com
+  - anthropic.com
+  - claude.ai
+  - claude.com
+  - bard.google.com
+  - gemini.google.com
+  - makersuite.google.com
+  - aistudio.google.com
+  - copilot.microsoft.com
+  - githubcopilot.com
+  - copilot-proxy.githubusercontent.com
+  - perplexity.ai
+  - poe.com
+  - character.ai
+  - huggingface.co
+  - x.ai
+  - grok.com
+  - mistral.ai
+  - deepseek.com
+  - cohere.com
+  - you.com
+  - phind.com
+  - cursor.sh
+  - cursor.com
+  - codeium.com
+  - tabnine.com
+  - blackbox.ai
+
+keywords:
+  - openai
+  - chatgpt
+  - anthropic
+  - claude
+  - gemini
+  - copilot
+  - perplexity
+  - midjourney
+  - stablediffusion
+  - huggingface
+  - vertexai
+  - grok
+  - mistral
+  - deepseek
+  - characterai
+  - llama
+  - bedrock
