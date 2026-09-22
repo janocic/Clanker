@@ -15,14 +15,19 @@ Rana faza / MVP za testiranje. Trenutno gotovo:
   promet preko WinDivert-a jer Windows ICS/Mobile Hotspot već drži port
   53 (`guard/dns_blocker.py`) - vidi napomenu ispod
 - Terminal dashboard uživo: uređaji + zadnji DNS upiti (`guard/dashboard.py`)
-- **Web dashboard** (Astro, `web/`) na `http://127.0.0.1:8420` - old-school
-  CRT/terminal stil (zeleni fosfor, matrix rain pozadina), sidebar
+- **Web dashboard** (Astro, `web/`) na `http://127.0.0.1:8420` - prigušen,
+  formalan stil (blijedo žuta pozadina, smeđe/zlatne boje, blaga
+  transparentnost i suptilno pulsiranje pozadine, bez neon-a), sidebar
   navigacija, uređivo uživo:
   - **Odabir uređaja u navigaciji** - klikni uređaj u sidebaru (ili IP u
-    tablici) za detaljan prikaz: veliki graf prometa, filtrirani DNS
-    upiti samo za taj uređaj, gumb za odspajanje
-  - **Veći grafovi na Pregledu** - bar chart "blokirano po uređaju" i
-    area chart "ukupni promet" preko svih uređaja
+    tablici) za detaljan prikaz: graf prometa, filtrirani DNS upiti
+    samo za taj uređaj, gumb za odspajanje
+  - **Log po uređaju, ne jedan veliki firehose** - na Pregledu, svaki
+    red uređaja ima strelicu koja otvara njegov log u fiksnom,
+    scrollable panelu. Scroll pozicija se ne resetira na svako
+    osvježavanje (1.5s) - samo klik na "UŽIVO" te vrati na vrh
+  - **Grafovi na Pregledu** - bar chart "blokirano po uređaju" i area
+    chart "ukupni promet" preko svih uređaja
   - gumb za odspajanje uređaja (Windows Firewall blokada po IP-u; vidi
     ograničenje ispod)
   - **Live blocklist** - dodaj/ukloni banovanu domenu iz UI-ja bez
@@ -32,11 +37,12 @@ Rana faza / MVP za testiranje. Trenutno gotovo:
     (`guard/traffic_meter.py`, WinDivert byte-counter) i heuristička
     "SUMNJIVO" oznaka kad je promet uređaja daleko iznad ostalih - vidi
     ograničenje ispod, ovo NIJE dokaz AI korištenja
-  - **Severity bojanje** (tri razine): magenta + "!!" za pokušaj
+  - **Severity bojanje** (tri razine): tamnoplavo + "!!" za pokušaj
     zaobilaženja DNS-a preko poznatog DoH/DoT resolvera (`doh_providers`
-    u blocklist.yaml - vidi ispod), crveno + "!" za potvrđenu AI domenu
-    (točan match u kuriranoj/live listi), narančasto za "sumnjivo" (samo
-    keyword match, npr. spominje "grok" ali nije x.ai/grok.com)
+    u blocklist.yaml - vidi ispod), opečeno crveno + "!" za potvrđenu AI
+    domenu (točan match u kuriranoj/live listi), narančasto za
+    "sumnjivo" (samo keyword match, npr. spominje "grok" ali nije
+    x.ai/grok.com)
 - ARP-based popis spojenih uređaja (`guard/devices.py`)
 - Legacy Windows hotspot helperi (`guard/hotspot.py`)
 - **Eksperimentalno**, još nije spojeno u dashboard: SNI-based deep
