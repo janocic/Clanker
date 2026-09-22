@@ -27,12 +27,17 @@ Rana faza / MVP za testiranje. Trenutno gotovo:
     scrollable panelu. Scroll pozicija se ne resetira na svako
     osvježavanje (1.5s) - samo klik na "UŽIVO" te vrati na vrh
   - **Grafovi na Pregledu** - bar chart "blokirano po uređaju" i area
-    chart "ukupni promet" preko svih uređaja
+    chart "ukupni promet" preko svih uređaja, namjerno kompaktni
   - gumb za odspajanje uređaja (Windows Firewall blokada po IP-u; vidi
     ograničenje ispod)
-  - **Live blocklist** - dodaj/ukloni banovanu domenu iz UI-ja bez
-    restarta (`guard/blocklist.py` `add_live_domain`/`remove_live_domain`,
-    perzistira u `config/live_blocklist.json`)
+  - **Banuj domenu izravno iz loga** - hoveraj na status bilo kojeg
+    upita da se pojavi gumb BLOCK; nema više posebnog "Live Blocklist"
+    panela s poljem za unos, banuj točno ono što vidiš u logu
+    (backend i dalje `guard/blocklist.py` `add_live_domain`, perzistira
+    u `config/live_blocklist.json`)
+  - **Uređaji sortirani po ozbiljnosti** - odspojeni/sumnjivi/s
+    blokiranim upitima isplivaju na vrh liste (i u sidebaru i u
+    tablici), bitno kad je spojeno puno uređaja
   - **Promet po uređaju** - sparkline/area graf zadnjih ~60s prometa
     (`guard/traffic_meter.py`, WinDivert byte-counter) i heuristička
     "SUMNJIVO" oznaka kad je promet uređaja daleko iznad ostalih - vidi
