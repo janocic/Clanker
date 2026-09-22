@@ -1,0 +1,589 @@
+---
+---
+
+<!doctype html>
+<html lang="hr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Clanker // CTF AI Guard</title>
+  </head>
+  <body>
+    <div class="scanlines" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-dot" id="live-dot"></span>
+        <span class="brand-name">CLANKER</span>
+        <span class="brand-sub">// CTF AI GUARD</span>
+      </div>
+      <div class="clock" id="clock">--:--:--</div>
+    </header>
+
+    <main>
+      <section class="stats" id="stats">
+        <div class="card">
+          <div class="card-label">Uredaji</div>
+          <div class="card-value" id="stat-devices">0</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Upiti ukupno</div>
+          <div class="card-value" id="stat-total">0</div>
+        </div>
+        <div class="card card-danger">
+          <div class="card-label">Blokirano upita</div>
+          <div class="card-value" id="stat-blocked">0</div>
+        </div>
+        <div class="card card-warn">
+          <div class="card-label">Odspojeno uredaja</div>
+          <div class="card-value" id="stat-cut">0</div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Uredaji</h2>
+          <span class="panel-hint">osvjezava se svakih 1.5s</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>IP</th>
+                <th>MAC</th>
+                <th>Upiti</th>
+                <th>Blokirano</th>
+                <th>Pristup</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="devices-body">
+              <tr class="empty-row"><td colspan="6">Cekam uredaje...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Zadnji DNS upiti</h2>
+          <span class="panel-hint">najnoviji na vrhu</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Vrijeme</th>
+                <th>Klijent</th>
+                <th>Domena</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="queries-body">
+              <tr class="empty-row"><td colspan="4">Nema jos upita...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      DNS blokada aktivna preko WinDivert-a &middot; odspajanje = Windows Firewall blokada prometa
+    </footer>
+
+    <div id="toast" class="toast" role="alert" hidden></div>
+
+    <script>
+      const devicesBody = document.getElementById("devices-body")!;
+      const queriesBody = document.getElementById("queries-body")!;
+      const clockEl = document.getElementById("clock")!;
+      const liveDot = document.getElementById("live-dot")!;
+
+      const statDevices = document.getElementById("stat-devices")!;
+      const statTotal = document.getElementById("stat-total")!;
+      const statBlocked = document.getElementById("stat-blocked")!;
+      const statCut = document.getElementById("stat-cut")!;
+
+      interface Device {
+        ip: string;
+        mac: string;
+        total: number;
+        blockedQueries: number;
+        networkBlocked: boolean;
+      }
+
+      interface QueryEntry {
+        ts: number;
+        client_ip: string;
+        client_mac: string;
+        qname: string;
+        blocked: boolean;
+        reason: string;
+      }
+
+      function fmtTime(ts: number): string {
+        const d = new Date(ts * 1000);
+        return d.toLocaleTimeString("hr-HR", { hour12: false });
+      }
+
+      function renderDevices(devices: Device[]) {
+        statDevices.textContent = String(devices.length);
+        statTotal.textContent = String(devices.reduce((a, d) => a + d.total, 0));
+        statBlocked.textContent = String(devices.reduce((a, d) => a + d.blockedQueries, 0));
+        statCut.textContent = String(devices.filter((d) => d.networkBlocked).length);
+
+        if (devices.length === 0) {
+          devicesBody.innerHTML = `<tr class="empty-row"><td colspan="6">Nema spojenih uredaja</td></tr>`;
+          return;
+        }
+
+        devicesBody.innerHTML = devices
+          .map((d) => {
+            const rowClass = d.blockedQueries > 0 ? "flagged" : "";
+            const accessLabel = d.networkBlocked
+              ? `<span class="badge badge-danger">ODSPOJEN</span>`
+              : `<span class="badge badge-ok">OK</span>`;
+            const btnLabel = d.networkBlocked ? "VRATI PRISTUP" : "ODSPOJI";
+            const btnClass = d.networkBlocked ? "btn btn-ghost" : "btn btn-danger";
+            return `
+              <tr class="${rowClass}">
+                <td>${d.ip}</td>
+                <td class="mono-dim">${d.mac}</td>
+                <td>${d.total}</td>
+                <td>${d.blockedQueries}</td>
+                <td>${accessLabel}</td>
+                <td>
+                  <button class="${btnClass}" data-ip="${d.ip}" data-blocked="${d.networkBlocked}">
+                    ${btnLabel}
+                  </button>
+                </td>
+              </tr>`;
+          })
+          .join("");
+      }
+
+      function renderQueries(queries: QueryEntry[]) {
+        if (queries.length === 0) {
+          queriesBody.innerHTML = `<tr class="empty-row"><td colspan="4">Nema jos upita...</td></tr>`;
+          return;
+        }
+        queriesBody.innerHTML = queries
+          .slice(0, 30)
+          .map((q) => {
+            const status = q.blocked
+              ? `<span class="badge badge-danger">BLOKIRANO</span>`
+              : `<span class="badge badge-ok">ok</span>`;
+            return `
+              <tr>
+                <td class="mono-dim">${fmtTime(q.ts)}</td>
+                <td>${q.client_ip}</td>
+                <td>${q.qname}</td>
+                <td>${status}</td>
+              </tr>`;
+          })
+          .join("");
+      }
+
+      async function refresh() {
+        try {
+          const [devicesRes, queriesRes] = await Promise.all([
+            fetch("/api/devices"),
+            fetch("/api/queries"),
+          ]);
+          const devices: Device[] = await devicesRes.json();
+          const queries: QueryEntry[] = await queriesRes.json();
+          renderDevices(devices);
+          renderQueries(queries);
+          liveDot.classList.remove("dot-error");
+        } catch {
+          liveDot.classList.add("dot-error");
+        }
+      }
+
+      const toast = document.getElementById("toast")!;
+      let toastTimer: ReturnType<typeof setTimeout> | undefined;
+
+      function showToast(message: string, isError: boolean) {
+        toast.textContent = message;
+        toast.className = isError ? "toast toast-error show" : "toast toast-ok show";
+        toast.hidden = false;
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => {
+          toast.hidden = true;
+        }, 3500);
+      }
+
+      devicesBody.addEventListener("click", async (event) => {
+        const btn = (event.target as HTMLElement).closest("button[data-ip]") as HTMLButtonElement | null;
+        if (!btn) return;
+        const ip = btn.dataset.ip!;
+        const currentlyBlocked = btn.dataset.blocked === "true";
+        const endpoint = currentlyBlocked ? "/api/unblock" : "/api/block";
+        btn.disabled = true;
+        try {
+          const res = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ip }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            showToast(body.error || "Akcija nije uspjela.", true);
+          } else {
+            showToast(
+              currentlyBlocked ? `${ip} - pristup vracen` : `${ip} - odspojen`,
+              false,
+            );
+          }
+        } catch {
+          showToast("Server ne odgovara.", true);
+        } finally {
+          btn.disabled = false;
+          refresh();
+        }
+      });
+
+      function tickClock() {
+        clockEl.textContent = new Date().toLocaleTimeString("hr-HR", { hour12: false });
+      }
+
+      tickClock();
+      setInterval(tickClock, 1000);
+      refresh();
+      setInterval(refresh, 1500);
+    </script>
+
+    <style>
+      :root {
+        --bg: #0a0f0d;
+        --surface: #0f1614;
+        --surface-2: #131c19;
+        --border: #1d2b26;
+        --text: #d9f5e6;
+        --text-dim: #6f9284;
+        --accent: #39ff88;
+        --accent-dim: #1f6b45;
+        --danger: #ff4d5e;
+        --danger-dim: #4a1a20;
+        --warn: #ffcc66;
+        --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas,
+          "SFMono-Regular", Menlo, monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font-mono);
+        min-height: 100%;
+      }
+
+      .scanlines {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+        background: repeating-linear-gradient(
+          to bottom,
+          rgba(57, 255, 136, 0.025),
+          rgba(57, 255, 136, 0.025) 1px,
+          transparent 1px,
+          transparent 3px
+        );
+        mix-blend-mode: overlay;
+      }
+
+      .topbar {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 18px 28px;
+        border-bottom: 1px solid var(--border);
+        background: linear-gradient(180deg, var(--surface), var(--bg));
+      }
+
+      .brand {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+      }
+
+      .brand-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 8px 1px var(--accent);
+        animation: pulse 1.8s ease-in-out infinite;
+        align-self: center;
+      }
+
+      .brand-dot.dot-error {
+        background: var(--danger);
+        box-shadow: 0 0 8px 1px var(--danger);
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.35;
+        }
+      }
+
+      .brand-name {
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: 2px;
+        color: var(--accent);
+        text-shadow: 0 0 12px rgba(57, 255, 136, 0.35);
+      }
+
+      .brand-sub {
+        font-size: 12px;
+        color: var(--text-dim);
+        letter-spacing: 1px;
+      }
+
+      .clock {
+        font-size: 13px;
+        color: var(--text-dim);
+        letter-spacing: 1px;
+      }
+
+      main {
+        position: relative;
+        z-index: 1;
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 24px 20px 60px;
+      }
+
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+        margin-bottom: 28px;
+      }
+
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px 18px;
+      }
+
+      .card-label {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        color: var(--text-dim);
+        margin-bottom: 8px;
+      }
+
+      .card-value {
+        font-size: 28px;
+        font-weight: 700;
+        color: var(--accent);
+      }
+
+      .card-danger .card-value {
+        color: var(--danger);
+      }
+
+      .card-warn .card-value {
+        color: var(--warn);
+      }
+
+      .panel {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        margin-bottom: 24px;
+        overflow: hidden;
+      }
+
+      .panel-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .panel-head h2 {
+        margin: 0;
+        font-size: 13px;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        color: var(--text);
+      }
+
+      .panel-hint {
+        font-size: 11px;
+        color: var(--text-dim);
+      }
+
+      .table-wrap {
+        overflow-x: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+
+      thead th {
+        text-align: left;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: var(--text-dim);
+        padding: 10px 16px;
+        background: var(--surface-2);
+        border-bottom: 1px solid var(--border);
+      }
+
+      tbody td {
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--border);
+        white-space: nowrap;
+      }
+
+      tbody tr:last-child td {
+        border-bottom: none;
+      }
+
+      tbody tr.flagged {
+        background: rgba(255, 77, 94, 0.05);
+      }
+
+      .mono-dim {
+        color: var(--text-dim);
+      }
+
+      .empty-row td {
+        text-align: center;
+        color: var(--text-dim);
+        padding: 20px;
+      }
+
+      .badge {
+        display: inline-block;
+        padding: 2px 9px;
+        border-radius: 999px;
+        font-size: 11px;
+        letter-spacing: 0.5px;
+        border: 1px solid transparent;
+      }
+
+      .badge-ok {
+        color: var(--accent);
+        border-color: var(--accent-dim);
+        background: rgba(57, 255, 136, 0.08);
+      }
+
+      .badge-danger {
+        color: var(--danger);
+        border-color: var(--danger-dim);
+        background: rgba(255, 77, 94, 0.1);
+      }
+
+      .btn {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.5px;
+        padding: 6px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        border: 1px solid transparent;
+        transition: opacity 0.15s ease, transform 0.1s ease;
+      }
+
+      .btn:hover {
+        opacity: 0.85;
+      }
+
+      .btn:active {
+        transform: scale(0.97);
+      }
+
+      .btn:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+
+      .btn-danger {
+        background: rgba(255, 77, 94, 0.12);
+        color: var(--danger);
+        border-color: var(--danger-dim);
+      }
+
+      .btn-ghost {
+        background: transparent;
+        color: var(--accent);
+        border-color: var(--accent-dim);
+      }
+
+      footer {
+        position: relative;
+        z-index: 1;
+        text-align: center;
+        padding: 18px;
+        font-size: 11px;
+        color: var(--text-dim);
+        border-top: 1px solid var(--border);
+      }
+
+      @media (max-width: 720px) {
+        .stats {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+
+      .toast {
+        position: fixed;
+        left: 50%;
+        bottom: 28px;
+        transform: translateX(-50%) translateY(12px);
+        z-index: 10;
+        padding: 10px 18px;
+        border-radius: 8px;
+        font-size: 12px;
+        letter-spacing: 0.3px;
+        border: 1px solid var(--border);
+        background: var(--surface-2);
+        color: var(--text);
+        opacity: 0;
+        transition: opacity 0.2s ease, transform 0.2s ease;
+        pointer-events: none;
+      }
+
+      .toast.show {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+      }
+
+      .toast-ok {
+        border-color: var(--accent-dim);
+        color: var(--accent);
+      }
+
+      .toast-error {
+        border-color: var(--danger-dim);
+        color: var(--danger);
+      }
+    </style>
+  </body>
+</html>

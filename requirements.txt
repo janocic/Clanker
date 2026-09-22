@@ -1,6 +1,7 @@
 dnslib>=0.9.24
 rich>=13.7.0
 PyYAML>=6.0.1
+Flask>=3.0.0
 
 # Core dependency: DNS blocking intercepts packets via WinDivert instead of
 # binding port 53 directly, since Windows ICS/Mobile Hotspot already owns

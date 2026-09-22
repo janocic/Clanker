@@ -5,3 +5,7 @@ venv/
 logs/*.jsonl
 logs/*.log
 .env
+
+node_modules/
+web/dist/
+web/.astro/

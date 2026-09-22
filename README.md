@@ -3,8 +3,9 @@
 Mrežni alat za CTF natjecanja koja zabranjuju korištenje AI alata, ali
 dopuštaju normalan pristup internetu. Igrači se spajaju na hotspot koji
 kontrolira organizator; DNS blocker propušta sav promet osim upita prema
-poznatim AI servisima (ChatGPT, Claude, Gemini, Copilot, itd.), a
-terminal dashboard uživo prikazuje spojene uređaje i njihove DNS upite.
+poznatim AI servisima (ChatGPT, Claude, Gemini, Copilot, itd.). Uz
+terminal dashboard postoji i web dashboard (Astro) s pregledom uređaja
+uživo i gumbom za odspajanje.
 
 ## Status
 
@@ -14,10 +15,22 @@ Rana faza / MVP za testiranje. Trenutno gotovo:
   promet preko WinDivert-a jer Windows ICS/Mobile Hotspot već drži port
   53 (`guard/dns_blocker.py`) - vidi napomenu ispod
 - Terminal dashboard uživo: uređaji + zadnji DNS upiti (`guard/dashboard.py`)
+- **Web dashboard** (Astro, `web/`) na `http://127.0.0.1:8420` - isti
+  podaci u ljepšem UI-ju, plus gumb za odspajanje uređaja (Windows
+  Firewall blokada po IP-u; vidi ograničenje ispod)
 - ARP-based popis spojenih uređaja (`guard/devices.py`)
 - Legacy Windows hotspot helperi (`guard/hotspot.py`)
 - **Eksperimentalno**, još nije spojeno u dashboard: SNI-based traffic monitor
   preko WinDivert-a, hvata pokušaje i kad klijent zaobiđe DNS (`guard/traffic_monitor.py`)
+
+### Odspajanje uređaja - ograničenje
+
+Windows ne nudi API za pravu WiFi deautentifikaciju pojedinog Mobile
+Hotspot klijenta. Gumb "ODSPOJI" u web dashboardu zato dodaje Windows
+Firewall pravilo koje odreže sav promet do/od te IP adrese - uređaj
+ostaje asociran na WiFi, ali nema internet. Dovoljno za CTF svrhu, ali
+ako uređaj dobije novu IP adresu (DHCP renew), pravilo treba ponovno
+primijeniti na novu adresu.
 
 ### Zašto WinDivert umjesto običnog DNS servera
 
@@ -52,8 +65,10 @@ zabrana osobnih hotspotova, fizički nadzor). DNS upit prema AI domeni je
 ## Zahtjevi
 
 - Python 3.10+
+- Node.js 18+ (za Astro web dashboard)
 - Windows 11 (testirano za Mobile Hotspot / legacy hosted network)
 - `pip install -r requirements.txt`
+- `cd web && npm install && npm run build` (jednom, i nakon svake izmjene `web/src`)
 
 ## Postavljanje hotspot-a
 
@@ -94,10 +109,16 @@ povišene ovlasti):
 python -m guard.main dns
 ```
 
+Ovo pokrene DNS blocker, terminal dashboard (kao i prije), **i** web
+dashboard na `http://127.0.0.1:8420` koji se sam otvori u browseru
+(`--no-browser` to isključuje, `--no-dashboard` iskljucuje samo
+terminal prikaz ako želiš samo web).
+
 Spoji telefon na hotspot, otvori bilo koju normalnu stranicu (treba
 raditi), pa probaj `claude.ai` ili `chat.openai.com` (treba se zaglaviti
 / timeout, nema instant NXDOMAIN u ovoj verziji) - oba pokušaja trebaju
-se pojaviti u dashboardu s tvog telefona (MAC adresa).
+se pojaviti u oba dashboarda s tvog telefona (MAC adresa). Gumb
+"ODSPOJI" u web dashboardu odreže internet toj IP adresi.
 
 Provjera spojenih uređaja bez dashboarda:
 
@@ -114,10 +135,10 @@ nepoznate poddomene, ali može false-positive-ati (npr. "llama" je i ime
 
 ## Sljedeći koraci (roadmap)
 
-1. Spojiti `traffic_monitor.py` (SNI) u glavni dashboard kao drugi izvor
+1. Spojiti `traffic_monitor.py` (SNI) u dashboarde kao drugi izvor
    signala, neovisan o DNS-u klijenta
 2. Blokada poznatih DoH resolvera (SNI/IP za cloudflare-dns.com,
    dns.google...) da se ne zaobiđe DNS sloj
-3. Automatsko/ručno blokiranje MAC adrese iz dashboarda
+3. Live-update web dashboarda preko WebSocket/SSE umjesto pollinga
 4. Za produkciju na natjecanju: OpenWrt ruter kao AP + ovaj laptop kao
    monitoring/kontrolna stanica (robusnije od laptopa kao jedinog AP-a)

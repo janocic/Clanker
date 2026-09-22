@@ -16,7 +16,9 @@ import subprocess
 
 
 def _run(cmd: list[str]) -> tuple[int, str, str]:
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    # encoding="oem": netsh writes to the console codepage, not the
+    # system ANSI codepage text=True would otherwise assume.
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="oem", errors="replace")
     return result.returncode, result.stdout, result.stderr
 
 
