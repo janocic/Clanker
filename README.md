@@ -15,26 +15,46 @@ Rana faza / MVP za testiranje. Trenutno gotovo:
   promet preko WinDivert-a jer Windows ICS/Mobile Hotspot već drži port
   53 (`guard/dns_blocker.py`) - vidi napomenu ispod
 - Terminal dashboard uživo: uređaji + zadnji DNS upiti (`guard/dashboard.py`)
-- **Web dashboard** (Astro, `web/`) na `http://127.0.0.1:8420` - dark
-  "liquid glass" UI, uređivo uživo:
+- **Web dashboard** (Astro, `web/`) na `http://127.0.0.1:8420` - old-school
+  CRT/terminal stil (zeleni fosfor, matrix rain pozadina), sidebar
+  navigacija, uređivo uživo:
+  - **Odabir uređaja u navigaciji** - klikni uređaj u sidebaru (ili IP u
+    tablici) za detaljan prikaz: veliki graf prometa, filtrirani DNS
+    upiti samo za taj uređaj, gumb za odspajanje
+  - **Veći grafovi na Pregledu** - bar chart "blokirano po uređaju" i
+    area chart "ukupni promet" preko svih uređaja
   - gumb za odspajanje uređaja (Windows Firewall blokada po IP-u; vidi
     ograničenje ispod)
   - **Live blocklist** - dodaj/ukloni banovanu domenu iz UI-ja bez
     restarta (`guard/blocklist.py` `add_live_domain`/`remove_live_domain`,
     perzistira u `config/live_blocklist.json`)
-  - **Promet po uređaju** - sparkline graf zadnjih ~60s prometa
+  - **Promet po uređaju** - sparkline/area graf zadnjih ~60s prometa
     (`guard/traffic_meter.py`, WinDivert byte-counter) i heuristička
     "SUMNJIVO" oznaka kad je promet uređaja daleko iznad ostalih - vidi
     ograničenje ispod, ovo NIJE dokaz AI korištenja
-  - Severity bojanje: crveno + "!" za potvrđenu AI domenu (točan match u
-    kuriranoj/live listi), narančasto za "sumnjivo" (samo keyword match,
-    npr. spominje "grok" ali nije x.ai/grok.com)
+  - **Severity bojanje** (tri razine): magenta + "!!" za pokušaj
+    zaobilaženja DNS-a preko poznatog DoH/DoT resolvera (`doh_providers`
+    u blocklist.yaml - vidi ispod), crveno + "!" za potvrđenu AI domenu
+    (točan match u kuriranoj/live listi), narančasto za "sumnjivo" (samo
+    keyword match, npr. spominje "grok" ali nije x.ai/grok.com)
 - ARP-based popis spojenih uređaja (`guard/devices.py`)
 - Legacy Windows hotspot helperi (`guard/hotspot.py`)
 - **Eksperimentalno**, još nije spojeno u dashboard: SNI-based deep
   packet monitor preko WinDivert-a, hvata pokušaje i kad klijent
   zaobiđe DNS (`guard/traffic_monitor.py`) - ne treba brkati s
   `traffic_meter.py` (bandwidth brojanje, već integriran)
+
+### DoH zaobilaženje - detekcija
+
+Klijent koji ignorira DHCP DNS i ručno gađa poznati DNS-over-HTTPS/DoT
+resolver (cloudflare-dns.com, dns.google, dns.quad9.net...) pokušava
+zaobići DNS blocker u cjelini - to je mnogo jači signal namjere nego
+običan keyword hit, jer normalan korisnik nema razloga ručno mijenjati
+DNS na natjecateljskoj mreži. `Blocklist` sad prepoznaje i blokira ove
+domene kao zasebnu "evasion" kategoriju (`config/blocklist.yaml`
+`doh_providers:`), prikazanu posebnom magenta bojom u dashboardu.
+Napomena: ovo ne hvata DoH koji ide direktno na IP bez DNS upita za sam
+resolver, niti enkriptirani SNI (ECH) - vidi ograničenja niže.
 
 ### Promet kao signal - ograničenje
 
@@ -157,9 +177,8 @@ nepoznate poddomene, ali može false-positive-ati (npr. "llama" je i ime
 ## Sljedeći koraci (roadmap)
 
 1. Spojiti `traffic_monitor.py` (SNI) u dashboarde kao drugi izvor
-   signala, neovisan o DNS-u klijenta
-2. Blokada poznatih DoH resolvera (SNI/IP za cloudflare-dns.com,
-   dns.google...) da se ne zaobiđe DNS sloj
-3. Live-update web dashboarda preko WebSocket/SSE umjesto pollinga
-4. Za produkciju na natjecanju: OpenWrt ruter kao AP + ovaj laptop kao
+   signala, neovisan o DNS-u klijenta - i za IP-only DoH koji ne prolazi
+   kroz normalan DNS upit
+2. Live-update web dashboarda preko WebSocket/SSE umjesto pollinga
+3. Za produkciju na natjecanju: OpenWrt ruter kao AP + ovaj laptop kao
    monitoring/kontrolna stanica (robusnije od laptopa kao jedinog AP-a)

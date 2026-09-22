@@ -56,3 +56,24 @@ keywords:
   - characterai
   - llama
   - bedrock
+
+# Known DNS-over-HTTPS / DNS-over-TLS resolvers. A query trying to reach
+# one of these while on this network is a much stronger signal than a
+# plain AI-keyword hit: someone is deliberately trying to route around
+# the DNS blocker itself, not just visiting a site that happens to
+# mention AI. Classified as its own "evasion" severity - see README.
+doh_providers:
+  - cloudflare-dns.com
+  - one.one.one.one
+  - dns.google
+  - dns.google.com
+  - mozilla.cloudflare-dns.com
+  - security.cloudflare-dns.com
+  - family.cloudflare-dns.com
+  - dns.quad9.net
+  - dns.adguard.com
+  - doh.opendns.com
+  - dns.nextdns.io
+  - doh.libredns.gr
+  - doh.dns.sb
+  - doh.cleanbrowsing.org

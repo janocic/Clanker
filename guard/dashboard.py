@@ -43,7 +43,10 @@ def render(state: DashboardState) -> Layout:
 
     for entry in recent:
         ts = time.strftime("%H:%M:%S", time.localtime(entry["ts"]))
-        if entry.get("blocked") and entry.get("severity") == "suspected":
+        severity = entry.get("severity")
+        if entry.get("blocked") and severity == "evasion":
+            status = "[bold magenta]DoH![/]"
+        elif entry.get("blocked") and severity == "suspected":
             status = "[orange3]AI ?[/]"
         elif entry.get("blocked"):
             status = "[bold red]AI ![/]"

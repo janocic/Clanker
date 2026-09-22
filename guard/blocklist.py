@@ -1,6 +1,10 @@
 """Loads config/blocklist.yaml and classifies queried hostnames.
 
-Two match tiers, exposed as Verdict.severity:
+Three match tiers, exposed as Verdict.severity:
+- "evasion": the query targets a known DNS-over-HTTPS/DoT resolver.
+  Stronger than a content match - it means the client is trying to
+  route around this DNS blocker entirely, not just visiting an
+  AI-adjacent site.
 - "confirmed": exact domain match (curated list or a live-banned domain
   added from the dashboard) - a known LLM/AI provider.
 - "suspected": keyword substring match - the hostname mentions something
@@ -23,7 +27,7 @@ LIVE_PATH = Path(__file__).resolve().parent.parent / "config" / "live_blocklist.
 class Verdict:
     blocked: bool
     reason: str
-    severity: str  # "confirmed" | "suspected" | "clean"
+    severity: str  # "evasion" | "confirmed" | "suspected" | "clean"
 
 
 class Blocklist:
@@ -33,6 +37,7 @@ class Blocklist:
         self._lock = threading.Lock()
         self.domains: list[str] = []
         self.keywords: list[str] = []
+        self.doh_providers: list[str] = []
         self.live_domains: list[str] = []
         self.reload()
 
@@ -40,10 +45,12 @@ class Blocklist:
         data = yaml.safe_load(self.path.read_text(encoding="utf-8")) or {}
         domains = [d.strip().lower() for d in data.get("domains", [])]
         keywords = [k.strip().lower() for k in data.get("keywords", [])]
+        doh_providers = [d.strip().lower() for d in data.get("doh_providers", [])]
         live = self._load_live()
         with self._lock:
             self.domains = domains
             self.keywords = keywords
+            self.doh_providers = doh_providers
             self.live_domains = live
 
     def _load_live(self) -> list[str]:
@@ -80,6 +87,7 @@ class Blocklist:
             return {
                 "domains": list(self.domains),
                 "keywords": list(self.keywords),
+                "doh_providers": list(self.doh_providers),
                 "live": list(self.live_domains),
             }
 
@@ -89,6 +97,11 @@ class Blocklist:
             domains = self.domains
             live_domains = self.live_domains
             keywords = self.keywords
+            doh_providers = self.doh_providers
+
+        for domain in doh_providers:
+            if name == domain or name.endswith("." + domain):
+                return Verdict(True, f"doh:{domain}", "evasion")
 
         for domain in live_domains:
             if name == domain or name.endswith("." + domain):
