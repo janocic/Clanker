@@ -114,7 +114,7 @@ def create_app(
         if not _valid_ip(ip):
             return jsonify({"error": "invalid ip"}), 400
         access_control.block_ip(ip)
-        if ip not in access_control.list_blocked():
+        if ip not in access_control.refresh_now():
             return jsonify(
                 {"error": "Firewall pravilo nije primijenjeno. Pokreni guard kao Administrator."}
             ), 500
@@ -126,7 +126,7 @@ def create_app(
         if not _valid_ip(ip):
             return jsonify({"error": "invalid ip"}), 400
         access_control.unblock_ip(ip)
-        if ip in access_control.list_blocked():
+        if ip in access_control.refresh_now():
             return jsonify(
                 {"error": "Firewall pravilo nije uklonjeno. Pokreni guard kao Administrator."}
             ), 500
