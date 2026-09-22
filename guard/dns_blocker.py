@@ -74,6 +74,7 @@ class DNSBlocker:
                         "qname": qname.rstrip("."),
                         "blocked": verdict.blocked,
                         "reason": verdict.reason,
+                        "severity": verdict.severity,
                     }
                 )
         self._handle = None

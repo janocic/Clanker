@@ -5,6 +5,7 @@ venv/
 logs/*.jsonl
 logs/*.log
 .env
+config/live_blocklist.json
 
 node_modules/
 web/dist/

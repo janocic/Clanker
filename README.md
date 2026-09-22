@@ -15,13 +15,34 @@ Rana faza / MVP za testiranje. Trenutno gotovo:
   promet preko WinDivert-a jer Windows ICS/Mobile Hotspot već drži port
   53 (`guard/dns_blocker.py`) - vidi napomenu ispod
 - Terminal dashboard uživo: uređaji + zadnji DNS upiti (`guard/dashboard.py`)
-- **Web dashboard** (Astro, `web/`) na `http://127.0.0.1:8420` - isti
-  podaci u ljepšem UI-ju, plus gumb za odspajanje uređaja (Windows
-  Firewall blokada po IP-u; vidi ograničenje ispod)
+- **Web dashboard** (Astro, `web/`) na `http://127.0.0.1:8420` - dark
+  "liquid glass" UI, uređivo uživo:
+  - gumb za odspajanje uređaja (Windows Firewall blokada po IP-u; vidi
+    ograničenje ispod)
+  - **Live blocklist** - dodaj/ukloni banovanu domenu iz UI-ja bez
+    restarta (`guard/blocklist.py` `add_live_domain`/`remove_live_domain`,
+    perzistira u `config/live_blocklist.json`)
+  - **Promet po uređaju** - sparkline graf zadnjih ~60s prometa
+    (`guard/traffic_meter.py`, WinDivert byte-counter) i heuristička
+    "SUMNJIVO" oznaka kad je promet uređaja daleko iznad ostalih - vidi
+    ograničenje ispod, ovo NIJE dokaz AI korištenja
+  - Severity bojanje: crveno + "!" za potvrđenu AI domenu (točan match u
+    kuriranoj/live listi), narančasto za "sumnjivo" (samo keyword match,
+    npr. spominje "grok" ali nije x.ai/grok.com)
 - ARP-based popis spojenih uređaja (`guard/devices.py`)
 - Legacy Windows hotspot helperi (`guard/hotspot.py`)
-- **Eksperimentalno**, još nije spojeno u dashboard: SNI-based traffic monitor
-  preko WinDivert-a, hvata pokušaje i kad klijent zaobiđe DNS (`guard/traffic_monitor.py`)
+- **Eksperimentalno**, još nije spojeno u dashboard: SNI-based deep
+  packet monitor preko WinDivert-a, hvata pokušaje i kad klijent
+  zaobiđe DNS (`guard/traffic_monitor.py`) - ne treba brkati s
+  `traffic_meter.py` (bandwidth brojanje, već integriran)
+
+### Promet kao signal - ograničenje
+
+Bandwidth sam po sebi je slab pokazatelj korištenja AI-a - video poziv,
+Windows update ili veliki download izgledaju identično na žici kao
+"puno prometa". "SUMNJIVO" oznaka uspoređuje uređaj s medijanom ostalih
+aktivnih uređaja (leave-one-out, da jedan outlier ne iskrivi vlastitu
+usporedbu) - tretiraj je kao "pogledaj pobliže", nikad kao dokaz.
 
 ### Odspajanje uređaja - ograničenje
 

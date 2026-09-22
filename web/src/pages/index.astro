@@ -10,8 +10,11 @@
   </head>
   <body>
     <div class="scanlines" aria-hidden="true"></div>
+    <div class="glow glow-green" aria-hidden="true"></div>
+    <div class="glow glow-red" aria-hidden="true"></div>
+    <div class="glow glow-orange" aria-hidden="true"></div>
 
-    <header class="topbar">
+    <header class="topbar glass">
       <div class="brand">
         <span class="brand-dot" id="live-dot"></span>
         <span class="brand-name">CLANKER</span>
@@ -22,25 +25,49 @@
 
     <main>
       <section class="stats" id="stats">
-        <div class="card">
+        <div class="card glass">
           <div class="card-label">Uredaji</div>
           <div class="card-value" id="stat-devices">0</div>
         </div>
-        <div class="card">
+        <div class="card glass">
           <div class="card-label">Upiti ukupno</div>
           <div class="card-value" id="stat-total">0</div>
         </div>
-        <div class="card card-danger">
+        <div class="card glass card-danger">
           <div class="card-label">Blokirano upita</div>
           <div class="card-value" id="stat-blocked">0</div>
         </div>
-        <div class="card card-warn">
+        <div class="card glass card-warn">
+          <div class="card-label">Sumnjivih uredaja</div>
+          <div class="card-value" id="stat-suspicious">0</div>
+        </div>
+        <div class="card glass card-warn">
           <div class="card-label">Odspojeno uredaja</div>
           <div class="card-value" id="stat-cut">0</div>
         </div>
       </section>
 
-      <section class="panel">
+      <section class="panel glass">
+        <div class="panel-head">
+          <h2>Live Blocklist</h2>
+          <span class="panel-hint">dodaj domenu odmah, bez restarta</span>
+        </div>
+        <div class="blocklist-form">
+          <input
+            type="text"
+            id="domain-input"
+            placeholder="npr. neka-nova-ai-stranica.com"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button class="btn btn-accent" id="ban-btn">BANNAJ</button>
+        </div>
+        <div class="chip-row" id="live-chips">
+          <span class="chip-empty">Ucitavam...</span>
+        </div>
+      </section>
+
+      <section class="panel glass">
         <div class="panel-head">
           <h2>Uredaji</h2>
           <span class="panel-hint">osvjezava se svakih 1.5s</span>
@@ -51,20 +78,21 @@
               <tr>
                 <th>IP</th>
                 <th>MAC</th>
+                <th>Promet</th>
                 <th>Upiti</th>
                 <th>Blokirano</th>
-                <th>Pristup</th>
+                <th>Status</th>
                 <th></th>
               </tr>
             </thead>
             <tbody id="devices-body">
-              <tr class="empty-row"><td colspan="6">Cekam uredaje...</td></tr>
+              <tr class="empty-row"><td colspan="7">Cekam uredaje...</td></tr>
             </tbody>
           </table>
         </div>
       </section>
 
-      <section class="panel">
+      <section class="panel glass">
         <div class="panel-head">
           <h2>Zadnji DNS upiti</h2>
           <span class="panel-hint">najnoviji na vrhu</span>
@@ -88,10 +116,11 @@
     </main>
 
     <footer>
-      DNS blokada aktivna preko WinDivert-a &middot; odspajanje = Windows Firewall blokada prometa
+      DNS blokada aktivna preko WinDivert-a &middot; odspajanje = Windows Firewall
+      blokada prometa &middot; promet = heuristika, ne dokaz
     </footer>
 
-    <div id="toast" class="toast" role="alert" hidden></div>
+    <div id="toast" class="toast glass" role="alert" hidden></div>
 
     <script>
       const devicesBody = document.getElementById("devices-body")!;
@@ -102,7 +131,15 @@
       const statDevices = document.getElementById("stat-devices")!;
       const statTotal = document.getElementById("stat-total")!;
       const statBlocked = document.getElementById("stat-blocked")!;
+      const statSuspicious = document.getElementById("stat-suspicious")!;
       const statCut = document.getElementById("stat-cut")!;
+
+      const domainInput = document.getElementById("domain-input") as HTMLInputElement;
+      const banBtn = document.getElementById("ban-btn") as HTMLButtonElement;
+      const liveChips = document.getElementById("live-chips")!;
+
+      const toast = document.getElementById("toast")!;
+      let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
       interface Device {
         ip: string;
@@ -110,6 +147,9 @@
         total: number;
         blockedQueries: number;
         networkBlocked: boolean;
+        traffic: number[];
+        bandwidthBps: number;
+        suspicious: boolean;
       }
 
       interface QueryEntry {
@@ -119,39 +159,93 @@
         qname: string;
         blocked: boolean;
         reason: string;
+        severity: "confirmed" | "suspected" | "clean";
+      }
+
+      function showToast(message: string, isError: boolean) {
+        toast.textContent = message;
+        toast.className = isError ? "toast glass toast-error show" : "toast glass toast-ok show";
+        toast.hidden = false;
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => {
+          toast.hidden = true;
+        }, 3500);
       }
 
       function fmtTime(ts: number): string {
-        const d = new Date(ts * 1000);
-        return d.toLocaleTimeString("hr-HR", { hour12: false });
+        return new Date(ts * 1000).toLocaleTimeString("hr-HR", { hour12: false });
+      }
+
+      function fmtRate(bps: number): string {
+        if (bps > 1024 * 1024) return (bps / 1024 / 1024).toFixed(2) + " MB/s";
+        if (bps > 1024) return (bps / 1024).toFixed(1) + " KB/s";
+        return Math.round(bps) + " B/s";
+      }
+
+      function sparklinePath(values: number[], width: number, height: number): string {
+        if (values.length === 0) return "";
+        const max = Math.max(...values, 1);
+        const step = width / Math.max(values.length - 1, 1);
+        return values
+          .map(
+            (v, i) =>
+              `${i === 0 ? "M" : "L"} ${(i * step).toFixed(1)} ${(height - (v / max) * height).toFixed(1)}`,
+          )
+          .join(" ");
+      }
+
+      function renderSparkline(values: number[], suspicious: boolean): string {
+        const w = 90;
+        const h = 26;
+        if (values.length < 2 || values.every((v) => v === 0)) {
+          return `<span class="mono-dim">--</span>`;
+        }
+        const path = sparklinePath(values, w, h);
+        const stroke = suspicious ? "var(--warn)" : "var(--accent)";
+        return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+          <path d="${path}" fill="none" stroke="${stroke}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" />
+        </svg>`;
       }
 
       function renderDevices(devices: Device[]) {
         statDevices.textContent = String(devices.length);
         statTotal.textContent = String(devices.reduce((a, d) => a + d.total, 0));
         statBlocked.textContent = String(devices.reduce((a, d) => a + d.blockedQueries, 0));
+        statSuspicious.textContent = String(devices.filter((d) => d.suspicious).length);
         statCut.textContent = String(devices.filter((d) => d.networkBlocked).length);
 
         if (devices.length === 0) {
-          devicesBody.innerHTML = `<tr class="empty-row"><td colspan="6">Nema spojenih uredaja</td></tr>`;
+          devicesBody.innerHTML = `<tr class="empty-row"><td colspan="7">Nema spojenih uredaja</td></tr>`;
           return;
         }
 
         devicesBody.innerHTML = devices
           .map((d) => {
-            const rowClass = d.blockedQueries > 0 ? "flagged" : "";
+            const rowClass = [
+              d.blockedQueries > 0 ? "flagged" : "",
+              d.suspicious ? "suspicious-row" : "",
+            ]
+              .join(" ")
+              .trim();
             const accessLabel = d.networkBlocked
               ? `<span class="badge badge-danger">ODSPOJEN</span>`
               : `<span class="badge badge-ok">OK</span>`;
+            const suspiciousLabel = d.suspicious
+              ? `<span class="badge badge-warn" title="Neuobicajeno velik promet - moze biti i streaming/download, provjeri rucno">SUMNJIVO</span>`
+              : "";
             const btnLabel = d.networkBlocked ? "VRATI PRISTUP" : "ODSPOJI";
             const btnClass = d.networkBlocked ? "btn btn-ghost" : "btn btn-danger";
             return `
               <tr class="${rowClass}">
                 <td>${d.ip}</td>
                 <td class="mono-dim">${d.mac}</td>
+                <td>
+                  ${renderSparkline(d.traffic, d.suspicious)}
+                  <div class="rate-label">${fmtRate(d.bandwidthBps)}</div>
+                </td>
                 <td>${d.total}</td>
                 <td>${d.blockedQueries}</td>
-                <td>${accessLabel}</td>
+                <td>${accessLabel} ${suspiciousLabel}</td>
                 <td>
                   <button class="${btnClass}" data-ip="${d.ip}" data-blocked="${d.networkBlocked}">
                     ${btnLabel}
@@ -170,14 +264,20 @@
         queriesBody.innerHTML = queries
           .slice(0, 30)
           .map((q) => {
-            const status = q.blocked
-              ? `<span class="badge badge-danger">BLOKIRANO</span>`
-              : `<span class="badge badge-ok">ok</span>`;
+            let domainHtml = q.qname;
+            let status = `<span class="badge badge-ok">ok</span>`;
+            if (q.blocked && q.severity === "confirmed") {
+              domainHtml = `<span class="domain-danger">${q.qname}<span class="mark">!</span></span>`;
+              status = `<span class="badge badge-danger">AI !</span>`;
+            } else if (q.blocked && q.severity === "suspected") {
+              domainHtml = `<span class="domain-warn">${q.qname}</span>`;
+              status = `<span class="badge badge-warn">AI ?</span>`;
+            }
             return `
               <tr>
                 <td class="mono-dim">${fmtTime(q.ts)}</td>
                 <td>${q.client_ip}</td>
-                <td>${q.qname}</td>
+                <td>${domainHtml}</td>
                 <td>${status}</td>
               </tr>`;
           })
@@ -200,19 +300,6 @@
         }
       }
 
-      const toast = document.getElementById("toast")!;
-      let toastTimer: ReturnType<typeof setTimeout> | undefined;
-
-      function showToast(message: string, isError: boolean) {
-        toast.textContent = message;
-        toast.className = isError ? "toast toast-error show" : "toast toast-ok show";
-        toast.hidden = false;
-        clearTimeout(toastTimer);
-        toastTimer = setTimeout(() => {
-          toast.hidden = true;
-        }, 3500);
-      }
-
       devicesBody.addEventListener("click", async (event) => {
         const btn = (event.target as HTMLElement).closest("button[data-ip]") as HTMLButtonElement | null;
         if (!btn) return;
@@ -230,10 +317,7 @@
           if (!res.ok) {
             showToast(body.error || "Akcija nije uspjela.", true);
           } else {
-            showToast(
-              currentlyBlocked ? `${ip} - pristup vracen` : `${ip} - odspojen`,
-              false,
-            );
+            showToast(currentlyBlocked ? `${ip} - pristup vracen` : `${ip} - odspojen`, false);
           }
         } catch {
           showToast("Server ne odgovara.", true);
@@ -243,29 +327,111 @@
         }
       });
 
+      function renderChips(live: string[]) {
+        if (live.length === 0) {
+          liveChips.innerHTML = `<span class="chip-empty">Nema jos dodanih domena</span>`;
+          return;
+        }
+        liveChips.innerHTML = live
+          .map(
+            (d) => `
+              <span class="chip">
+                ${d}
+                <button class="chip-remove" data-domain="${d}" title="Ukloni">&times;</button>
+              </span>`,
+          )
+          .join("");
+      }
+
+      async function refreshBlocklist() {
+        try {
+          const res = await fetch("/api/blocklist");
+          const data = await res.json();
+          renderChips(data.live || []);
+        } catch {
+          // silent - next poll will retry
+        }
+      }
+
+      async function banDomain() {
+        const domain = domainInput.value.trim();
+        if (!domain) return;
+        banBtn.disabled = true;
+        try {
+          const res = await fetch("/api/blocklist", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ domain }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            showToast(body.error || "Neispravna domena.", true);
+          } else {
+            showToast(`${body.domain} - banovan`, false);
+            domainInput.value = "";
+          }
+        } catch {
+          showToast("Server ne odgovara.", true);
+        } finally {
+          banBtn.disabled = false;
+          refreshBlocklist();
+        }
+      }
+
+      banBtn.addEventListener("click", banDomain);
+      domainInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") banDomain();
+      });
+
+      liveChips.addEventListener("click", async (event) => {
+        const btn = (event.target as HTMLElement).closest("button[data-domain]") as HTMLButtonElement | null;
+        if (!btn) return;
+        const domain = btn.dataset.domain!;
+        btn.disabled = true;
+        try {
+          await fetch("/api/blocklist", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ domain }),
+          });
+          showToast(`${domain} - uklonjen s live liste`, false);
+        } finally {
+          refreshBlocklist();
+        }
+      });
+
       function tickClock() {
         clockEl.textContent = new Date().toLocaleTimeString("hr-HR", { hour12: false });
       }
 
       tickClock();
       setInterval(tickClock, 1000);
+
       refresh();
+      refreshBlocklist();
       setInterval(refresh, 1500);
+      setInterval(refreshBlocklist, 5000);
     </script>
 
-    <style>
+    <style is:global>
+      /* is:global: most content on this page (tables, badges, chips) is
+         rendered client-side via innerHTML, so Astro's default scoped
+         styles - which only tag elements present at build time - never
+         match it. */
       :root {
-        --bg: #0a0f0d;
-        --surface: #0f1614;
-        --surface-2: #131c19;
-        --border: #1d2b26;
+        --bg: #07100d;
+        --bg-2: #0b1613;
+        --surface: rgba(16, 24, 22, 0.55);
+        --surface-2: rgba(20, 30, 27, 0.65);
+        --border: rgba(255, 255, 255, 0.08);
         --text: #d9f5e6;
         --text-dim: #6f9284;
         --accent: #39ff88;
         --accent-dim: #1f6b45;
         --danger: #ff4d5e;
-        --danger-dim: #4a1a20;
-        --warn: #ffcc66;
+        --danger-dim: #7a2430;
+        --warn: #ffb454;
+        --warn-dim: #7a5a24;
         --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas,
           "SFMono-Regular", Menlo, monospace;
       }
@@ -278,10 +444,10 @@
       body {
         margin: 0;
         padding: 0;
-        background: var(--bg);
+        min-height: 100%;
+        background: radial-gradient(ellipse at top, var(--bg-2), var(--bg) 70%);
         color: var(--text);
         font-family: var(--font-mono);
-        min-height: 100%;
       }
 
       .scanlines {
@@ -291,23 +457,78 @@
         z-index: 0;
         background: repeating-linear-gradient(
           to bottom,
-          rgba(57, 255, 136, 0.025),
-          rgba(57, 255, 136, 0.025) 1px,
+          rgba(57, 255, 136, 0.02),
+          rgba(57, 255, 136, 0.02) 1px,
           transparent 1px,
           transparent 3px
         );
         mix-blend-mode: overlay;
       }
 
-      .topbar {
+      .glow {
+        position: fixed;
+        border-radius: 50%;
+        filter: blur(110px);
+        z-index: 0;
+        pointer-events: none;
+      }
+
+      .glow-green {
+        width: 480px;
+        height: 480px;
+        background: var(--accent);
+        opacity: 0.22;
+        top: -140px;
+        left: -120px;
+      }
+
+      .glow-red {
+        width: 420px;
+        height: 420px;
+        background: var(--danger);
+        opacity: 0.16;
+        bottom: -150px;
+        right: -90px;
+      }
+
+      .glow-orange {
+        width: 380px;
+        height: 380px;
+        background: var(--warn);
+        opacity: 0.12;
+        top: 38%;
+        right: 6%;
+      }
+
+      .glass {
         position: relative;
-        z-index: 1;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01)),
+          var(--surface);
+        backdrop-filter: blur(22px) saturate(150%);
+        -webkit-backdrop-filter: blur(22px) saturate(150%);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      }
+
+      .topbar {
+        position: sticky;
+        top: 14px;
+        z-index: 2;
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 18px 28px;
-        border-bottom: 1px solid var(--border);
-        background: linear-gradient(180deg, var(--surface), var(--bg));
+        margin: 14px 20px 0;
+        padding: 16px 26px;
+        border-radius: 16px;
+      }
+
+      main {
+        position: relative;
+        z-index: 1;
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 22px 20px 60px;
       }
 
       .brand {
@@ -321,14 +542,14 @@
         height: 9px;
         border-radius: 50%;
         background: var(--accent);
-        box-shadow: 0 0 8px 1px var(--accent);
+        box-shadow: 0 0 10px 2px var(--accent);
         animation: pulse 1.8s ease-in-out infinite;
         align-self: center;
       }
 
       .brand-dot.dot-error {
         background: var(--danger);
-        box-shadow: 0 0 8px 1px var(--danger);
+        box-shadow: 0 0 10px 2px var(--danger);
       }
 
       @keyframes pulse {
@@ -346,7 +567,7 @@
         font-weight: 700;
         letter-spacing: 2px;
         color: var(--accent);
-        text-shadow: 0 0 12px rgba(57, 255, 136, 0.35);
+        text-shadow: 0 0 14px rgba(57, 255, 136, 0.4);
       }
 
       .brand-sub {
@@ -361,25 +582,14 @@
         letter-spacing: 1px;
       }
 
-      main {
-        position: relative;
-        z-index: 1;
-        max-width: 1100px;
-        margin: 0 auto;
-        padding: 24px 20px 60px;
-      }
-
       .stats {
         display: grid;
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: repeat(5, 1fr);
         gap: 14px;
-        margin-bottom: 28px;
+        margin-bottom: 22px;
       }
 
       .card {
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: 8px;
         padding: 16px 18px;
       }
 
@@ -392,7 +602,7 @@
       }
 
       .card-value {
-        font-size: 28px;
+        font-size: 26px;
         font-weight: 700;
         color: var(--accent);
       }
@@ -406,10 +616,7 @@
       }
 
       .panel {
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        margin-bottom: 24px;
+        margin-bottom: 22px;
         overflow: hidden;
       }
 
@@ -434,6 +641,69 @@
         color: var(--text-dim);
       }
 
+      .blocklist-form {
+        display: flex;
+        gap: 10px;
+        padding: 16px 18px 4px;
+      }
+
+      .blocklist-form input {
+        flex: 1;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 9px 12px;
+        color: var(--text);
+        font-family: var(--font-mono);
+        font-size: 13px;
+        outline: none;
+      }
+
+      .blocklist-form input:focus {
+        border-color: var(--accent-dim);
+        box-shadow: 0 0 0 3px rgba(57, 255, 136, 0.1);
+      }
+
+      .chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 14px 18px 18px;
+      }
+
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 5px 6px 5px 12px;
+        border-radius: 999px;
+        background: rgba(57, 255, 136, 0.08);
+        border: 1px solid var(--accent-dim);
+        color: var(--accent);
+        font-size: 12px;
+      }
+
+      .chip-remove {
+        background: transparent;
+        border: none;
+        color: var(--text-dim);
+        cursor: pointer;
+        font-size: 15px;
+        line-height: 1;
+        padding: 2px 7px;
+        border-radius: 999px;
+      }
+
+      .chip-remove:hover {
+        color: var(--danger);
+        background: rgba(255, 77, 94, 0.14);
+      }
+
+      .chip-empty {
+        color: var(--text-dim);
+        font-size: 12px;
+      }
+
       .table-wrap {
         overflow-x: auto;
       }
@@ -451,7 +721,7 @@
         letter-spacing: 1px;
         color: var(--text-dim);
         padding: 10px 16px;
-        background: var(--surface-2);
+        background: rgba(255, 255, 255, 0.03);
         border-bottom: 1px solid var(--border);
       }
 
@@ -459,6 +729,7 @@
         padding: 10px 16px;
         border-bottom: 1px solid var(--border);
         white-space: nowrap;
+        vertical-align: middle;
       }
 
       tbody tr:last-child td {
@@ -469,8 +740,42 @@
         background: rgba(255, 77, 94, 0.05);
       }
 
+      tbody tr.suspicious-row {
+        background: rgba(255, 180, 84, 0.06);
+      }
+
+      tbody tr.flagged.suspicious-row {
+        background: linear-gradient(90deg, rgba(255, 77, 94, 0.08), rgba(255, 180, 84, 0.08));
+      }
+
       .mono-dim {
         color: var(--text-dim);
+      }
+
+      .spark {
+        display: block;
+        width: 90px;
+        height: 26px;
+      }
+
+      .rate-label {
+        font-size: 10px;
+        color: var(--text-dim);
+        margin-top: 2px;
+      }
+
+      .domain-danger {
+        color: var(--danger);
+        font-weight: 600;
+      }
+
+      .domain-danger .mark {
+        margin-left: 4px;
+      }
+
+      .domain-warn {
+        color: var(--warn);
+        font-weight: 600;
       }
 
       .empty-row td {
@@ -497,7 +802,13 @@
       .badge-danger {
         color: var(--danger);
         border-color: var(--danger-dim);
-        background: rgba(255, 77, 94, 0.1);
+        background: rgba(255, 77, 94, 0.12);
+      }
+
+      .badge-warn {
+        color: var(--warn);
+        border-color: var(--warn-dim);
+        background: rgba(255, 180, 84, 0.12);
       }
 
       .btn {
@@ -525,7 +836,7 @@
       }
 
       .btn-danger {
-        background: rgba(255, 77, 94, 0.12);
+        background: rgba(255, 77, 94, 0.14);
         color: var(--danger);
         border-color: var(--danger-dim);
       }
@@ -536,6 +847,13 @@
         border-color: var(--accent-dim);
       }
 
+      .btn-accent {
+        background: linear-gradient(135deg, rgba(57, 255, 136, 0.28), rgba(57, 255, 136, 0.08));
+        color: var(--accent);
+        border-color: var(--accent-dim);
+        padding: 9px 18px;
+      }
+
       footer {
         position: relative;
         z-index: 1;
@@ -543,12 +861,20 @@
         padding: 18px;
         font-size: 11px;
         color: var(--text-dim);
-        border-top: 1px solid var(--border);
       }
 
-      @media (max-width: 720px) {
+      @media (max-width: 900px) {
+        .stats {
+          grid-template-columns: repeat(3, 1fr);
+        }
+      }
+
+      @media (max-width: 560px) {
         .stats {
           grid-template-columns: repeat(2, 1fr);
+        }
+        .blocklist-form {
+          flex-direction: column;
         }
       }
 
@@ -559,11 +885,9 @@
         transform: translateX(-50%) translateY(12px);
         z-index: 10;
         padding: 10px 18px;
-        border-radius: 8px;
+        border-radius: 12px;
         font-size: 12px;
         letter-spacing: 0.3px;
-        border: 1px solid var(--border);
-        background: var(--surface-2);
         color: var(--text);
         opacity: 0;
         transition: opacity 0.2s ease, transform 0.2s ease;
@@ -576,12 +900,10 @@
       }
 
       .toast-ok {
-        border-color: var(--accent-dim);
         color: var(--accent);
       }
 
       .toast-error {
-        border-color: var(--danger-dim);
         color: var(--danger);
       }
     </style>

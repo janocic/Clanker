@@ -8,6 +8,7 @@ from . import devices, hotspot
 from .blocklist import Blocklist
 from .dashboard_state import DashboardState
 from .dns_blocker import DNSBlocker
+from .traffic_meter import TrafficMeter
 
 WEB_PORT = 8420
 
@@ -16,15 +17,17 @@ def cmd_dns(args) -> None:
     bl = Blocklist()
     blocker = DNSBlocker(blocklist=bl)
     state = DashboardState()
+    meter = TrafficMeter()
 
     print("[guard] DNS blocker presrece udp/53 preko WinDivert-a (ICS i dalje rjesava dopusteno)")
     print(f"[guard] Blokirano {len(bl.domains)} domena, {len(bl.keywords)} kljucnih rijeci")
     blocker.start_background()
     state.start_background()
+    meter.start_background()
 
     from .api import create_app
 
-    app = create_app(state)
+    app = create_app(state, bl, meter)
     url = f"http://127.0.0.1:{WEB_PORT}"
 
     def _run_api():

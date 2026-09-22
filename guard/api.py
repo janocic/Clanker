@@ -5,15 +5,22 @@ same origin (127.0.0.1) so the browser needs no CORS setup at all.
 """
 
 import ipaddress
+import re
 from pathlib import Path
 
 from flask import Flask, jsonify, request
 
 from . import access_control
+from .blocklist import Blocklist
 from .dashboard_state import DashboardState
 from .devices import get_arp_table
+from .traffic_meter import TrafficMeter, compute_suspicious
 
 WEB_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
+
+_HOSTNAME_RE = re.compile(
+    r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))+$"
+)
 
 
 def _valid_ip(value: str) -> bool:
@@ -24,7 +31,20 @@ def _valid_ip(value: str) -> bool:
         return False
 
 
-def create_app(state: DashboardState) -> Flask:
+def _normalize_domain(raw: str) -> str | None:
+    value = raw.strip().lower()
+    value = re.sub(r"^[a-z]+://", "", value)
+    value = value.split("/")[0].split(":")[0]
+    if not value or not _HOSTNAME_RE.match(value):
+        return None
+    return value
+
+
+def create_app(
+    state: DashboardState,
+    blocklist: Blocklist,
+    traffic_meter: TrafficMeter | None = None,
+) -> Flask:
     app = Flask(__name__, static_folder=str(WEB_DIST), static_url_path="")
 
     @app.get("/")
@@ -41,9 +61,13 @@ def create_app(state: DashboardState) -> Flask:
         _, stats = state.snapshot()
         arp = get_arp_table()
         blocked_ips = access_control.list_blocked()
+        traffic = traffic_meter.snapshot() if traffic_meter else {}
+
+        rates = {ip: traffic_meter.current_rate_bps(ip) for ip in traffic} if traffic_meter else {}
+        suspicious_map = compute_suspicious(rates)
 
         rows = []
-        for ip in sorted(set(arp) | set(stats)):
+        for ip in sorted(set(arp) | set(stats) | set(traffic)):
             s = stats.get(ip, {"total": 0, "blocked": 0, "mac": arp.get(ip, "?")})
             rows.append(
                 {
@@ -52,6 +76,9 @@ def create_app(state: DashboardState) -> Flask:
                     "total": s["total"],
                     "blockedQueries": s["blocked"],
                     "networkBlocked": ip in blocked_ips,
+                    "traffic": traffic.get(ip, []),
+                    "bandwidthBps": round(rates.get(ip, 0.0), 1),
+                    "suspicious": suspicious_map.get(ip, False),
                 }
             )
         return jsonify(rows)
@@ -60,6 +87,26 @@ def create_app(state: DashboardState) -> Flask:
     def api_queries():
         recent, _ = state.snapshot()
         return jsonify(recent)
+
+    @app.get("/api/blocklist")
+    def api_blocklist_get():
+        return jsonify(blocklist.snapshot())
+
+    @app.post("/api/blocklist")
+    def api_blocklist_add():
+        raw = (request.get_json(silent=True) or {}).get("domain", "")
+        domain = _normalize_domain(raw)
+        if not domain:
+            return jsonify({"error": "neispravna domena"}), 400
+        blocklist.add_live_domain(domain)
+        return jsonify({"ok": True, "domain": domain})
+
+    @app.delete("/api/blocklist")
+    def api_blocklist_delete():
+        raw = (request.get_json(silent=True) or {}).get("domain", "")
+        domain = _normalize_domain(raw) or raw.strip().lower()
+        blocklist.remove_live_domain(domain)
+        return jsonify({"ok": True})
 
     @app.post("/api/block")
     def api_block():

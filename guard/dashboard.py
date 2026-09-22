@@ -43,7 +43,12 @@ def render(state: DashboardState) -> Layout:
 
     for entry in recent:
         ts = time.strftime("%H:%M:%S", time.localtime(entry["ts"]))
-        status = "[bold red]BLOKIRANO[/]" if entry.get("blocked") else "[green]ok[/]"
+        if entry.get("blocked") and entry.get("severity") == "suspected":
+            status = "[orange3]AI ?[/]"
+        elif entry.get("blocked"):
+            status = "[bold red]AI ![/]"
+        else:
+            status = "[green]ok[/]"
         queries_table.add_row(ts, entry["client_ip"], entry["qname"], status)
 
     layout["devices"].update(Panel(devices_table))
