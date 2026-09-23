@@ -6,6 +6,7 @@ logs/*.jsonl
 logs/*.log
 .env
 config/live_blocklist.json
+config/nicknames.json
 
 node_modules/
 web/dist/

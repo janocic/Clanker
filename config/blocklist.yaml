@@ -5,6 +5,13 @@
 #           subdomains/services not explicitly listed, at the cost of
 #           occasional false positives (review dashboard alerts, don't
 #           treat a hit alone as proof of AI use - see README limitations).
+# blocked_tlds: whole top-level domains to block. ".ai" is Anguilla's
+#           ccTLD but is used almost exclusively by AI products, so for a
+#           no-AI competition blocking the entire TLD is a deliberate
+#           policy call. Matched as a "confirmed" hit.
+
+blocked_tlds:
+  - .ai
 
 domains:
   - openai.com

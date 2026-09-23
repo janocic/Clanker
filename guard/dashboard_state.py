@@ -17,7 +17,11 @@ LOG_PATH = Path(__file__).resolve().parent.parent / "logs" / "dns_queries.jsonl"
 class DashboardState:
     def __init__(self, max_recent: int = 50):
         self.recent = deque(maxlen=max_recent)
-        self.stats = defaultdict(lambda: {"total": 0, "blocked": 0, "mac": "?"})
+        # "ai" = blocked queries at confirmed/evasion severity (an actual
+        # AI provider or a DoH-evasion attempt), as opposed to a weak
+        # keyword-only "suspected" hit. Used to flag the device as
+        # suspicious even when it transferred almost no data.
+        self.stats = defaultdict(lambda: {"total": 0, "blocked": 0, "ai": 0, "mac": "?"})
         self._lock = threading.Lock()
         LOG_PATH.parent.mkdir(exist_ok=True)
         LOG_PATH.touch(exist_ok=True)
@@ -49,6 +53,8 @@ class DashboardState:
                 stat["mac"] = entry.get("client_mac", "?")
                 if entry.get("blocked"):
                     stat["blocked"] += 1
+                    if entry.get("severity") in ("confirmed", "evasion"):
+                        stat["ai"] += 1
 
     def snapshot(self) -> tuple[list[dict], dict[str, dict]]:
         with self._lock:

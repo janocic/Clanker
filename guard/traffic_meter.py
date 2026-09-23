@@ -18,9 +18,18 @@ from collections import defaultdict, deque
 import pydivert
 
 HOTSPOT_SUBNET_PREFIX = "192.168.137"
+GATEWAY_IP = f"{HOTSPOT_SUBNET_PREFIX}.1"
+_LOW = f"{HOTSPOT_SUBNET_PREFIX}.1"
+_HIGH = f"{HOTSPOT_SUBNET_PREFIX}.254"
+
+# Match a packet if EITHER endpoint is a hotspot client - i.e. both the
+# client's upload (SrcAddr in range) and its download (DstAddr in range).
+# The old filter was "inbound and SrcAddr in range", which only counted
+# upload and missed all the download, so total traffic looked far too
+# small to be useful.
 FILTER = (
-    f"inbound and ip.SrcAddr >= {HOTSPOT_SUBNET_PREFIX}.1 "
-    f"and ip.SrcAddr <= {HOTSPOT_SUBNET_PREFIX}.254"
+    f"(ip.SrcAddr >= {_LOW} and ip.SrcAddr <= {_HIGH}) or "
+    f"(ip.DstAddr >= {_LOW} and ip.DstAddr <= {_HIGH})"
 )
 
 SAMPLE_INTERVAL_SECONDS = 2.0
@@ -44,6 +53,23 @@ class TrafficMeter:
         self._running = False
         self._handle: pydivert.WinDivert | None = None
 
+    @staticmethod
+    def _in_range(ip: str) -> bool:
+        return ip.startswith(HOTSPOT_SUBNET_PREFIX + ".") and ip != GATEWAY_IP
+
+    def _client_ip(self, src: str, dst: str) -> str | None:
+        """Which endpoint is the hotspot client this packet belongs to.
+
+        Upload  (client -> internet):  src is the client.
+        Download(internet -> client):  dst is the client.
+        Gateway (.1) traffic is not a client and is ignored as an owner.
+        """
+        if self._in_range(src):
+            return src
+        if self._in_range(dst):
+            return dst
+        return None
+
     def _capture_loop(self) -> None:
         with pydivert.WinDivert(FILTER) as w:
             self._handle = w
@@ -52,8 +78,10 @@ class TrafficMeter:
                     packet = w.recv()
                 except OSError:
                     break
-                with self._lock:
-                    self._byte_counts[packet.src_addr] += len(packet.raw.tobytes())
+                client = self._client_ip(packet.src_addr, packet.dst_addr)
+                if client is not None:
+                    with self._lock:
+                        self._byte_counts[client] += len(packet.raw.tobytes())
                 w.send(packet)
         self._handle = None
 

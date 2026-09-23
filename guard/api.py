@@ -14,6 +14,7 @@ from . import access_control
 from .blocklist import Blocklist
 from .dashboard_state import DashboardState
 from .devices import get_arp_table
+from .nicknames import Nicknames
 from .traffic_meter import TrafficMeter, compute_suspicious
 
 WEB_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
@@ -44,8 +45,10 @@ def create_app(
     state: DashboardState,
     blocklist: Blocklist,
     traffic_meter: TrafficMeter | None = None,
+    nicknames: Nicknames | None = None,
 ) -> Flask:
     app = Flask(__name__, static_folder=str(WEB_DIST), static_url_path="")
+    nicks = nicknames or Nicknames()
 
     @app.get("/")
     def index():
@@ -64,21 +67,31 @@ def create_app(
         traffic = traffic_meter.snapshot() if traffic_meter else {}
 
         rates = {ip: traffic_meter.current_rate_bps(ip) for ip in traffic} if traffic_meter else {}
-        suspicious_map = compute_suspicious(rates)
+        traffic_suspicious = compute_suspicious(rates)
 
         rows = []
         for ip in sorted(set(arp) | set(stats) | set(traffic)):
-            s = stats.get(ip, {"total": 0, "blocked": 0, "mac": arp.get(ip, "?")})
+            s = stats.get(ip, {"total": 0, "blocked": 0, "ai": 0, "mac": arp.get(ip, "?")})
+            mac = arp.get(ip, s.get("mac", "?"))
+            ai_hits = s.get("ai", 0)
+            high_traffic = traffic_suspicious.get(ip, False)
             rows.append(
                 {
                     "ip": ip,
-                    "mac": arp.get(ip, s.get("mac", "?")),
+                    "mac": mac,
+                    "nickname": nicks.get(mac),
                     "total": s["total"],
                     "blockedQueries": s["blocked"],
+                    "aiHits": ai_hits,
                     "networkBlocked": ip in blocked_ips,
                     "traffic": traffic.get(ip, []),
                     "bandwidthBps": round(rates.get(ip, 0.0), 1),
-                    "suspicious": suspicious_map.get(ip, False),
+                    "highTraffic": high_traffic,
+                    # A device is suspicious if it actually reached AI/DoH
+                    # domains OR is transferring far more than its peers.
+                    # AI hits matter even at near-zero bandwidth, since a
+                    # blocked request transfers almost nothing.
+                    "suspicious": ai_hits > 0 or high_traffic,
                 }
             )
         return jsonify(rows)
@@ -87,6 +100,15 @@ def create_app(
     def api_queries():
         recent, _ = state.snapshot()
         return jsonify(recent)
+
+    @app.post("/api/nickname")
+    def api_nickname():
+        body = request.get_json(silent=True) or {}
+        mac = str(body.get("mac", "")).strip()
+        if not re.match(r"^[0-9a-fA-F]{2}([-:][0-9a-fA-F]{2}){5}$", mac):
+            return jsonify({"error": "neispravna MAC adresa"}), 400
+        nickname = nicks.set(mac, str(body.get("nickname", "")))
+        return jsonify({"ok": True, "mac": mac.lower(), "nickname": nickname})
 
     @app.get("/api/blocklist")
     def api_blocklist_get():

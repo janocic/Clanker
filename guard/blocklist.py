@@ -38,6 +38,7 @@ class Blocklist:
         self.domains: list[str] = []
         self.keywords: list[str] = []
         self.doh_providers: list[str] = []
+        self.blocked_tlds: list[str] = []
         self.live_domains: list[str] = []
         self.reload()
 
@@ -46,11 +47,16 @@ class Blocklist:
         domains = [d.strip().lower() for d in data.get("domains", [])]
         keywords = [k.strip().lower() for k in data.get("keywords", [])]
         doh_providers = [d.strip().lower() for d in data.get("doh_providers", [])]
+        # normalize each TLD to a leading-dot suffix ("ai" -> ".ai")
+        blocked_tlds = [
+            ("." + t.strip().lower().lstrip(".")) for t in data.get("blocked_tlds", []) if t.strip()
+        ]
         live = self._load_live()
         with self._lock:
             self.domains = domains
             self.keywords = keywords
             self.doh_providers = doh_providers
+            self.blocked_tlds = blocked_tlds
             self.live_domains = live
 
     def _load_live(self) -> list[str]:
@@ -88,6 +94,7 @@ class Blocklist:
                 "domains": list(self.domains),
                 "keywords": list(self.keywords),
                 "doh_providers": list(self.doh_providers),
+                "blocked_tlds": list(self.blocked_tlds),
                 "live": list(self.live_domains),
             }
 
@@ -98,6 +105,7 @@ class Blocklist:
             live_domains = self.live_domains
             keywords = self.keywords
             doh_providers = self.doh_providers
+            blocked_tlds = self.blocked_tlds
 
         for domain in doh_providers:
             if name == domain or name.endswith("." + domain):
@@ -110,6 +118,10 @@ class Blocklist:
         for domain in domains:
             if name == domain or name.endswith("." + domain):
                 return Verdict(True, f"domain:{domain}", "confirmed")
+
+        for tld in blocked_tlds:
+            if name.endswith(tld):
+                return Verdict(True, f"tld:{tld}", "confirmed")
 
         for keyword in keywords:
             if keyword in name:
