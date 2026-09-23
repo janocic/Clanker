@@ -7,6 +7,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Clanker</title>
+    <script is:inline>
+      // Apply the saved theme before first paint to avoid a light flash.
+      try {
+        var t = localStorage.getItem("clanker-theme");
+        if (t) document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div class="ambient-pulse" aria-hidden="true"></div>
@@ -21,6 +28,25 @@
           <div id="device-nav"><span class="nav-empty">nema uredaja</span></div>
         </nav>
 
+        <div class="robot-box">
+          <svg viewBox="0 0 100 100" class="robot" id="robot" aria-hidden="true">
+            <line class="r-antenna" x1="50" y1="19" x2="50" y2="9" />
+            <circle class="r-bulb" cx="50" cy="6" r="4" />
+            <rect class="r-ear" x="15" y="37" width="6" height="14" rx="2" />
+            <rect class="r-ear" x="79" y="37" width="6" height="14" rx="2" />
+            <rect class="r-head" x="22" y="20" width="56" height="47" rx="11" />
+            <line class="r-brow" x1="30" y1="30" x2="44" y2="35" />
+            <line class="r-brow" x1="70" y1="30" x2="56" y2="35" />
+            <circle class="r-eye" cx="38" cy="41" r="7" />
+            <circle class="r-eye" cx="62" cy="41" r="7" />
+            <circle class="r-pupil" cx="38" cy="41" r="3" />
+            <circle class="r-pupil" cx="62" cy="41" r="3" />
+            <rect class="r-mouth-calm" x="40" y="55" width="20" height="4" rx="2" />
+            <ellipse class="r-mouth-angry" cx="50" cy="57" rx="9" ry="6" />
+          </svg>
+          <div class="robot-caption" id="robot-caption">sve mirno</div>
+        </div>
+
         <div class="sidebar-status">
           <span class="brand-dot" id="live-dot"></span>
           <span id="clock">--:--:--</span>
@@ -30,6 +56,7 @@
       <div class="content">
         <header class="topbar">
           <div class="breadcrumb" id="breadcrumb">PREGLED</div>
+          <button class="theme-toggle" id="theme-toggle" title="Svijetla / tamna tema">TAMNO</button>
         </header>
 
         <main id="view-overview">
@@ -46,7 +73,7 @@
               <div class="card-label">Blokirano upita</div>
               <div class="card-value" id="stat-blocked">0</div>
             </div>
-            <div class="term card card-warn">
+            <div class="term card card-danger">
               <div class="card-label">Sumnjivih uredaja</div>
               <div class="card-value" id="stat-suspicious">0</div>
             </div>
@@ -102,7 +129,10 @@
         <main id="view-device" hidden>
           <div class="device-header">
             <div>
-              <h2 id="device-title">--</h2>
+              <h2 id="device-title">
+                <span id="device-title-text">--</span>
+                <button class="nick-edit" id="device-nick-edit" title="Preimenuj">&#9998;</button>
+              </h2>
               <div class="mono-dim" id="device-mac">--</div>
             </div>
             <div class="device-header-right">
@@ -165,6 +195,19 @@
 
     <div id="toast" class="term toast" role="alert" hidden></div>
 
+    <div id="nick-modal" class="modal-overlay" hidden>
+      <div class="modal term">
+        <div class="modal-title">Preimenuj uredaj</div>
+        <div class="modal-sub mono-dim" id="nick-modal-sub">--</div>
+        <input type="text" id="nick-input" maxlength="40" autocomplete="off" spellcheck="false"
+          placeholder="npr. Marko - laptop (prazno = ukloni)" />
+        <div class="modal-actions">
+          <button class="btn btn-ghost" id="nick-cancel">Odustani</button>
+          <button class="btn btn-accent" id="nick-save">Spremi</button>
+        </div>
+      </div>
+    </div>
+
     <script>
       // ---------- element refs ----------
       const devicesBody = document.getElementById("devices-body")!;
@@ -187,26 +230,47 @@
       const viewDevice = document.getElementById("view-device")!;
       const breadcrumb = document.getElementById("breadcrumb")!;
 
-      const deviceTitle = document.getElementById("device-title")!;
+      const deviceTitleText = document.getElementById("device-title-text")!;
       const deviceMac = document.getElementById("device-mac")!;
       const deviceBadges = document.getElementById("device-badges")!;
       const deviceActionBtn = document.getElementById("device-action-btn") as HTMLButtonElement;
+      const deviceNickEdit = document.getElementById("device-nick-edit")!;
       const deviceStatTotal = document.getElementById("device-stat-total")!;
       const deviceStatBlocked = document.getElementById("device-stat-blocked")!;
       const deviceStatRate = document.getElementById("device-stat-rate")!;
 
+      const themeToggle = document.getElementById("theme-toggle")!;
+      const robotEl = document.getElementById("robot")!;
+      const robotCaption = document.getElementById("robot-caption")!;
+
+      const nickModal = document.getElementById("nick-modal")!;
+      const nickModalSub = document.getElementById("nick-modal-sub")!;
+      const nickInput = document.getElementById("nick-input") as HTMLInputElement;
+      const nickSaveBtn = document.getElementById("nick-save")!;
+      const nickCancelBtn = document.getElementById("nick-cancel")!;
+
       const toast = document.getElementById("toast")!;
       let toastTimer: ReturnType<typeof setTimeout> | undefined;
+
+      function esc(s: string): string {
+        return String(s == null ? "" : s).replace(
+          /[&<>"']/g,
+          (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!,
+        );
+      }
 
       // ---------- types ----------
       interface Device {
         ip: string;
         mac: string;
+        nickname: string;
         total: number;
         blockedQueries: number;
+        aiHits: number;
         networkBlocked: boolean;
         traffic: number[];
         bandwidthBps: number;
+        highTraffic: boolean;
         suspicious: boolean;
       }
 
@@ -244,6 +308,17 @@
         if (bps > 1024 * 1024) return (bps / 1024 / 1024).toFixed(2) + " MB/s";
         if (bps > 1024) return (bps / 1024).toFixed(1) + " KB/s";
         return Math.round(bps) + " B/s";
+      }
+
+      // What to show as the device's name: its nickname if set, else the IP.
+      function deviceLabel(d: Device): string {
+        return d.nickname ? esc(d.nickname) : d.ip;
+      }
+
+      function suspiciousReason(d: Device): string {
+        if (d.aiHits > 0 && d.highTraffic) return "Posjetio AI/DoH domene i ima velik promet";
+        if (d.aiHits > 0) return "Posjetio AI/DoH domene (" + d.aiHits + ")";
+        return "Neuobicajeno velik promet - moze biti i streaming/download, provjeri rucno";
       }
 
       // ---------- scroll-preserving log panels ----------
@@ -345,7 +420,7 @@
         const path = values
           .map((v, i) => `${i === 0 ? "M" : "L"} ${(i * step).toFixed(1)} ${(h - (v / max) * h).toFixed(1)}`)
           .join(" ");
-        const stroke = suspicious ? "var(--warn)" : "var(--accent)";
+        const stroke = suspicious ? "var(--danger)" : "var(--accent)";
         return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
           <path d="${path}" fill="none" stroke="${stroke}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" />
         </svg>`;
@@ -410,37 +485,36 @@
         }
         deviceNavEl.innerHTML = sortDevicesBySeverity(devices)
           .map((d) => {
-            let dot = "dot-ok";
-            if (d.networkBlocked) dot = "dot-danger";
-            else if (d.suspicious) dot = "dot-warn";
+            const dot = d.networkBlocked || d.suspicious ? "dot-danger" : "dot-ok";
             const active = d.ip === selectedIp ? "active" : "";
             return `<button class="nav-item device-nav-item ${active}" data-ip="${d.ip}">
-              <span class="nav-dot ${dot}"></span>${d.ip}
+              <span class="nav-dot ${dot}"></span><span class="nav-name">${deviceLabel(d)}</span>
             </button>`;
           })
           .join("");
       }
 
       function severityDomainHtml(q: QueryEntry): { domainHtml: string; status: string } {
+        const name = esc(q.qname);
         if (q.blocked && q.severity === "evasion") {
           return {
-            domainHtml: `<span class="domain-evasion">${q.qname}<span class="mark">!!</span></span>`,
+            domainHtml: `<span class="domain-evasion">${name}<span class="mark">!!</span></span>`,
             status: `<span class="badge badge-evasion">DoH ZAOBILAZI</span>`,
           };
         }
         if (q.blocked && q.severity === "confirmed") {
           return {
-            domainHtml: `<span class="domain-danger">${q.qname}<span class="mark">!</span></span>`,
+            domainHtml: `<span class="domain-danger">${name}<span class="mark">!</span></span>`,
             status: `<span class="badge badge-danger">AI !</span>`,
           };
         }
         if (q.blocked && q.severity === "suspected") {
           return {
-            domainHtml: `<span class="domain-warn">${q.qname}</span>`,
+            domainHtml: `<span class="domain-warn">${name}</span>`,
             status: `<span class="badge badge-warn">AI ?</span>`,
           };
         }
-        return { domainHtml: q.qname, status: `<span class="badge badge-ok">ok</span>` };
+        return { domainHtml: name, status: `<span class="badge badge-ok">ok</span>` };
       }
 
       function renderQueryRows(queries: QueryEntry[], showClient: boolean): string {
@@ -451,7 +525,7 @@
           .slice(0, 30)
           .map((q) => {
             const { domainHtml, status } = severityDomainHtml(q);
-            const clientCell = showClient ? `<td>${q.client_ip}</td>` : "";
+            const clientCell = showClient ? `<td>${esc(q.client_ip)}</td>` : "";
             return `
               <tr>
                 <td class="mono-dim">${fmtTime(q.ts)}</td>
@@ -459,7 +533,7 @@
                 <td>${domainHtml}</td>
                 <td class="status-cell">
                   ${status}
-                  <button class="row-block-btn" data-domain="${q.qname}" title="Banuj ${q.qname}">BLOCK</button>
+                  <button class="row-block-btn" data-domain="${esc(q.qname)}" title="Banuj ${esc(q.qname)}">BLOCK</button>
                 </td>
               </tr>`;
           })
@@ -485,17 +559,22 @@
               ? `<span class="badge badge-danger">ODSPOJEN</span>`
               : `<span class="badge badge-ok">OK</span>`;
             const suspiciousLabel = d.suspicious
-              ? `<span class="badge badge-warn" title="Neuobicajeno velik promet - moze biti i streaming/download, provjeri rucno">SUMNJIVO</span>`
+              ? `<span class="badge badge-danger" title="${suspiciousReason(d)}">SUMNJIVO</span>`
               : "";
             const btnLabel = d.networkBlocked ? "VRATI PRISTUP" : "ODSPOJI";
             const btnClass = d.networkBlocked ? "btn btn-ghost" : "btn btn-danger";
             const isExpanded = d.ip === expandedIp;
             const expandIcon = isExpanded ? "▾" : "▸";
+            const ipSub = d.nickname ? `<div class="ip-sub mono-dim">${d.ip}</div>` : "";
 
             let row = `
               <tr class="${rowClass}">
                 <td><button class="expand-toggle" data-ip="${d.ip}" title="Prikazi/sakrij log">${expandIcon}</button></td>
-                <td><button class="device-ip-link" data-ip="${d.ip}">${d.ip}</button></td>
+                <td class="ip-cell">
+                  <button class="device-ip-link" data-ip="${d.ip}">${deviceLabel(d)}</button>
+                  <button class="nick-edit" data-ip="${d.ip}" title="Preimenuj">&#9998;</button>
+                  ${ipSub}
+                </td>
                 <td class="mono-dim">${d.mac}</td>
                 <td>
                   ${renderSparkline(d.traffic, d.suspicious)}
@@ -566,8 +645,9 @@
           return;
         }
 
-        deviceTitle.textContent = device.ip;
-        deviceMac.textContent = device.mac;
+        deviceTitleText.textContent = device.nickname || device.ip;
+        deviceMac.textContent = device.nickname ? `${device.ip} · ${device.mac}` : device.mac;
+        deviceNickEdit.dataset.ip = device.ip;
 
         const badges = [
           device.networkBlocked
@@ -576,7 +656,7 @@
         ];
         if (device.suspicious) {
           badges.push(
-            `<span class="badge badge-warn" title="Neuobicajeno velik promet - provjeri rucno">SUMNJIVO</span>`,
+            `<span class="badge badge-danger" title="${suspiciousReason(device)}">SUMNJIVO</span>`,
           );
         }
         deviceBadges.innerHTML = badges.join(" ");
@@ -587,7 +667,7 @@
 
         deviceChartEl.innerHTML = makeAreaChart(
           device.traffic,
-          device.suspicious ? "var(--warn)" : "var(--accent)",
+          device.suspicious ? "var(--danger)" : "var(--accent)",
           fmtRate,
         );
 
@@ -637,6 +717,7 @@
           lastDevices = await devicesRes.json();
           lastQueries = await queriesRes.json();
           renderAll();
+          checkRobot(lastQueries);
           liveDot.classList.remove("dot-error");
         } catch {
           liveDot.classList.add("dot-error");
@@ -738,8 +819,117 @@
           rowBlockBtn.disabled = true;
           await banDomain(domain);
           rowBlockBtn.disabled = false;
+          return;
+        }
+
+        const nickEditBtn = target.closest(".nick-edit[data-ip]") as HTMLButtonElement | null;
+        if (nickEditBtn) {
+          openNickModal(nickEditBtn.dataset.ip!);
+          return;
         }
       });
+
+      // ---------- nickname modal ----------
+      let nickModalMac = "";
+
+      function openNickModal(ip: string) {
+        const d = lastDevices.find((x) => x.ip === ip);
+        if (!d || !d.mac || d.mac === "?") {
+          showToast("Nema MAC adrese za ovaj uredaj.", true);
+          return;
+        }
+        nickModalMac = d.mac;
+        nickModalSub.textContent = `${d.ip} · ${d.mac}`;
+        nickInput.value = d.nickname || "";
+        nickModal.hidden = false;
+        nickInput.focus();
+        nickInput.select();
+      }
+
+      function closeNickModal() {
+        nickModal.hidden = true;
+        nickModalMac = "";
+      }
+
+      async function saveNick() {
+        const nickname = nickInput.value.trim();
+        try {
+          const res = await fetch("/api/nickname", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mac: nickModalMac, nickname }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            showToast(body.error || "Greska pri spremanju.", true);
+            return;
+          }
+          showToast(nickname ? `Nadimak spremljen: ${nickname}` : "Nadimak uklonjen", false);
+          closeNickModal();
+          refresh();
+        } catch {
+          showToast("Server ne odgovara.", true);
+        }
+      }
+
+      nickSaveBtn.addEventListener("click", saveNick);
+      nickCancelBtn.addEventListener("click", closeNickModal);
+      nickInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") saveNick();
+        if (e.key === "Escape") closeNickModal();
+      });
+      nickModal.addEventListener("click", (e) => {
+        if (e.target === nickModal) closeNickModal();
+      });
+
+      // ---------- theme toggle ----------
+      let theme = "light";
+      try {
+        theme = localStorage.getItem("clanker-theme") || "light";
+      } catch {}
+
+      function applyTheme(t: string) {
+        document.documentElement.setAttribute("data-theme", t);
+        themeToggle.textContent = t === "dark" ? "SVIJETLO" : "TAMNO";
+        try {
+          localStorage.setItem("clanker-theme", t);
+        } catch {}
+      }
+      applyTheme(theme);
+      themeToggle.addEventListener("click", () => {
+        theme = theme === "dark" ? "light" : "dark";
+        applyTheme(theme);
+      });
+
+      // ---------- robot: chill, but freaks out on a fresh AI hit ----------
+      let lastAiTs = 0;
+      let alarmTimer: ReturnType<typeof setTimeout> | undefined;
+
+      function triggerRobotAlarm() {
+        robotEl.classList.add("alarm");
+        robotCaption.textContent = "AI DETEKTIRAN!";
+        robotCaption.classList.add("alarm");
+        clearTimeout(alarmTimer);
+        alarmTimer = setTimeout(() => {
+          robotEl.classList.remove("alarm");
+          robotCaption.classList.remove("alarm");
+          robotCaption.textContent = "sve mirno";
+        }, 5000);
+      }
+
+      function checkRobot(queries: QueryEntry[]) {
+        let newest = 0;
+        for (const q of queries) {
+          if (q.blocked && (q.severity === "confirmed" || q.severity === "evasion")) {
+            if (q.ts > newest) newest = q.ts;
+          }
+        }
+        if (newest > lastAiTs) {
+          lastAiTs = newest;
+          // only react to genuinely fresh hits, not old history on load
+          if (Date.now() / 1000 - newest < 10) triggerRobotAlarm();
+        }
+      }
 
       // ---------- clock ----------
       function tickClock() {
@@ -775,8 +965,36 @@
         --warn-dim: #d0a06c;
         --evasion: #3b4a6b;
         --evasion-dim: #7c88a8;
+        --inset-bg: rgba(255, 253, 240, 0.5);
+        --shadow-sm: 0 2px 8px rgba(74, 59, 31, 0.13);
+        --shadow-md: 0 10px 30px rgba(74, 59, 31, 0.22);
+        --overlay: rgba(74, 59, 31, 0.4);
         --font-mono: ui-monospace, "Cascadia Code", "Consolas", "Lucida Console",
           "SFMono-Regular", Menlo, monospace;
+      }
+
+      /* Dark theme: gray with traces of yellow/gold. */
+      :root[data-theme="dark"] {
+        --bg: #191915;
+        --bg-2: #221f19;
+        --panel-bg: rgba(40, 39, 32, 0.82);
+        --panel-bg-2: rgba(52, 50, 40, 0.85);
+        --shell-bg: rgba(30, 29, 24, 0.68);
+        --border: rgba(214, 182, 96, 0.16);
+        --text: #eae3d0;
+        --text-dim: #9c927b;
+        --accent: #e6bf45;
+        --accent-dim: #7d6626;
+        --danger: #e56a52;
+        --danger-dim: #7f3628;
+        --warn: #e0a24a;
+        --warn-dim: #7d5f2a;
+        --evasion: #8698c9;
+        --evasion-dim: #444f78;
+        --inset-bg: rgba(52, 50, 40, 0.55);
+        --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.42);
+        --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.58);
+        --overlay: rgba(0, 0, 0, 0.55);
       }
 
       * {
@@ -839,7 +1057,7 @@
         -webkit-backdrop-filter: blur(3px);
         border: 1px solid var(--border);
         border-radius: 8px;
-        box-shadow: 0 1px 3px rgba(74, 59, 31, 0.08);
+        box-shadow: var(--shadow-md);
         overflow: hidden;
       }
 
@@ -975,7 +1193,11 @@
       }
 
       .topbar {
-        padding: 14px 24px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 24px;
         border-bottom: 1px solid var(--border);
         background: var(--panel-bg);
       }
@@ -984,6 +1206,23 @@
         font-size: 14px;
         letter-spacing: 1.5px;
         color: var(--text-dim);
+      }
+
+      .theme-toggle {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        letter-spacing: 1px;
+        color: var(--accent);
+        background: transparent;
+        border: 1px solid var(--accent-dim);
+        border-radius: 5px;
+        padding: 5px 12px;
+        cursor: pointer;
+        flex-shrink: 0;
+      }
+
+      .theme-toggle:hover {
+        background: rgba(168, 121, 10, 0.1);
       }
 
       main {
@@ -996,6 +1235,7 @@
         -webkit-backdrop-filter: blur(6px);
         border: 1px solid var(--border);
         border-radius: 8px;
+        box-shadow: var(--shadow-sm);
       }
 
       .stats {
@@ -1144,16 +1384,16 @@
         border-bottom: none;
       }
 
+      /* Weak signal: has blocked queries that were only keyword "suspected". */
       tbody tr.flagged {
-        background: rgba(161, 58, 42, 0.1);
+        background: rgba(184, 117, 46, 0.08);
       }
 
-      tbody tr.suspicious-row {
-        background: rgba(184, 117, 46, 0.12);
-      }
-
+      /* Strong signal: reached an AI/DoH domain or is on unusually high
+         traffic -> red, per request ("crvena na sumnjivim uredajima"). */
+      tbody tr.suspicious-row,
       tbody tr.flagged.suspicious-row {
-        background: linear-gradient(90deg, rgba(161, 58, 42, 0.13), rgba(184, 117, 46, 0.13));
+        background: rgba(161, 58, 42, 0.15);
       }
 
       .status-cell {
@@ -1232,7 +1472,7 @@
         margin: 8px 14px 14px;
         border: 1px solid var(--border);
         border-radius: 6px;
-        background: rgba(255, 253, 240, 0.5);
+        background: var(--inset-bg);
         overflow: hidden;
         white-space: normal;
       }
@@ -1397,6 +1637,251 @@
         gap: 10px;
       }
 
+      .device-header h2 {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      /* ---------- nicknames ---------- */
+      .ip-cell {
+        white-space: nowrap;
+      }
+
+      .ip-sub {
+        font-size: 11px;
+        margin-top: 2px;
+      }
+
+      .nick-edit {
+        background: transparent;
+        border: none;
+        color: var(--text-dim);
+        cursor: pointer;
+        font-size: 13px;
+        padding: 2px 4px;
+        margin-left: 4px;
+        border-radius: 4px;
+        opacity: 0.5;
+      }
+
+      .nick-edit:hover {
+        color: var(--accent);
+        opacity: 1;
+      }
+
+      .device-header .nick-edit {
+        font-size: 16px;
+      }
+
+      .nav-name {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      /* ---------- modal ---------- */
+      .modal-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--overlay);
+        backdrop-filter: blur(2px);
+        -webkit-backdrop-filter: blur(2px);
+        padding: 16px;
+      }
+
+      .modal-overlay[hidden] {
+        display: none;
+      }
+
+      .modal {
+        width: 100%;
+        max-width: 380px;
+        padding: 20px;
+        box-shadow: var(--shadow-md);
+      }
+
+      .modal-title {
+        font-size: 15px;
+        letter-spacing: 1px;
+        color: var(--accent);
+        margin-bottom: 4px;
+      }
+
+      .modal-sub {
+        font-size: 12px;
+        margin-bottom: 14px;
+      }
+
+      #nick-input {
+        width: 100%;
+        background: var(--inset-bg);
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        padding: 10px 12px;
+        color: var(--text);
+        font-family: var(--font-mono);
+        font-size: 14px;
+        outline: none;
+      }
+
+      #nick-input:focus {
+        border-color: var(--accent-dim);
+      }
+
+      .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      /* ---------- robot mascot ---------- */
+      .robot-box {
+        border-top: 1px solid var(--border);
+        padding: 12px 10px 8px;
+        text-align: center;
+      }
+
+      .robot {
+        width: 84px;
+        height: 84px;
+        transform-origin: 50% 88%;
+        animation: robotIdle 3.6s ease-in-out infinite;
+        overflow: visible;
+      }
+
+      @keyframes robotIdle {
+        0%,
+        100% {
+          transform: translateY(0) rotate(0deg);
+        }
+        50% {
+          transform: translateY(-3px) rotate(-2deg);
+        }
+      }
+
+      .r-head {
+        fill: var(--panel-bg-2);
+        stroke: var(--accent-dim);
+        stroke-width: 2;
+      }
+      .r-ear {
+        fill: var(--accent-dim);
+      }
+      .r-antenna {
+        stroke: var(--accent-dim);
+        stroke-width: 2;
+      }
+      .r-bulb {
+        fill: var(--accent);
+        animation: bulbGlow 2.4s ease-in-out infinite;
+      }
+      @keyframes bulbGlow {
+        0%,
+        100% {
+          opacity: 0.55;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+      .r-eye {
+        fill: var(--accent);
+        opacity: 0.85;
+      }
+      .r-pupil {
+        fill: #2a2418;
+      }
+      .r-mouth-calm {
+        fill: var(--accent);
+      }
+      .r-mouth-angry {
+        display: none;
+        fill: var(--danger);
+      }
+      .r-brow {
+        display: none;
+        stroke: var(--danger);
+        stroke-width: 3;
+        stroke-linecap: round;
+      }
+
+      .robot.alarm {
+        animation: robotShake 0.26s linear infinite;
+      }
+      @keyframes robotShake {
+        0% {
+          transform: translate(0, 0) rotate(0);
+        }
+        25% {
+          transform: translate(-2px, 1px) rotate(-5deg);
+        }
+        50% {
+          transform: translate(2px, -1px) rotate(5deg);
+        }
+        75% {
+          transform: translate(-1px, -1px) rotate(-4deg);
+        }
+        100% {
+          transform: translate(1px, 1px) rotate(4deg);
+        }
+      }
+      .robot.alarm .r-head {
+        stroke: var(--danger);
+      }
+      .robot.alarm .r-eye {
+        fill: #ff5a4a;
+        opacity: 1;
+      }
+      .robot.alarm .r-pupil {
+        fill: #5a0000;
+      }
+      .robot.alarm .r-bulb {
+        fill: var(--danger);
+        animation: bulbFlash 0.22s steps(1) infinite;
+      }
+      @keyframes bulbFlash {
+        0% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.15;
+        }
+      }
+      .robot.alarm .r-mouth-calm {
+        display: none;
+      }
+      .robot.alarm .r-mouth-angry {
+        display: block;
+      }
+      .robot.alarm .r-brow {
+        display: block;
+      }
+
+      .robot-caption {
+        font-size: 11px;
+        letter-spacing: 1px;
+        color: var(--text-dim);
+        margin-top: 4px;
+      }
+
+      .robot-caption.alarm {
+        color: var(--danger);
+        font-weight: 700;
+        animation: captionBlink 0.5s steps(1) infinite;
+      }
+      @keyframes captionBlink {
+        50% {
+          opacity: 0.35;
+        }
+      }
+
       footer {
         position: relative;
         z-index: 1;
@@ -1479,6 +1964,9 @@
         .sidebar-status {
           border-top: none;
           border-left: 1px solid var(--border);
+        }
+        .robot-box {
+          display: none;
         }
         .stats,
         .charts-row {

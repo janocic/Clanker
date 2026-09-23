@@ -16,9 +16,16 @@ Rana faza / MVP za testiranje. Trenutno gotovo:
   53 (`guard/dns_blocker.py`) - vidi napomenu ispod
 - Terminal dashboard uživo: uređaji + zadnji DNS upiti (`guard/dashboard.py`)
 - **Web dashboard** (Astro, `web/`) na `http://127.0.0.1:8420` - prigušen,
-  formalan stil (blijedo žuta pozadina, smeđe/zlatne boje, blaga
-  transparentnost i suptilno pulsiranje pozadine, bez neon-a), sidebar
-  navigacija, uređivo uživo:
+  formalan stil (blijedo žuta pozadina, smeđe/zlatne boje, meke sjene),
+  **prekidač svijetla/tamna tema** (tamna = sivo s tragovima zlatne,
+  pamti se u localStorage), sidebar navigacija, uređivo uživo:
+  - **Nadimci uređaja** - klikni olovku pored IP-a (u tablici ili na
+    stranici uređaja) i preimenuj uređaj (npr. "Marko - laptop").
+    Nadimak se prikazuje umjesto IP-a svugdje; perzistira po MAC-u u
+    `config/nicknames.json` (`guard/nicknames.py`)
+  - **Robot maskota** (dolje u sidebaru) - miran i zlatan dok je sve ok,
+    ali pocrveni i podivlja ("AI DETEKTIRAN!") na svaki svjež pogodak AI
+    domene ili DoH pokušaja
   - **Odabir uređaja u navigaciji** - klikni uređaj u sidebaru (ili IP u
     tablici) za detaljan prikaz: graf prometa, filtrirani DNS upiti
     samo za taj uređaj, gumb za odspajanje
@@ -39,9 +46,11 @@ Rana faza / MVP za testiranje. Trenutno gotovo:
     blokiranim upitima isplivaju na vrh liste (i u sidebaru i u
     tablici), bitno kad je spojeno puno uređaja
   - **Promet po uređaju** - sparkline/area graf zadnjih ~60s prometa
-    (`guard/traffic_meter.py`, WinDivert byte-counter) i heuristička
-    "SUMNJIVO" oznaka kad je promet uređaja daleko iznad ostalih - vidi
-    ograničenje ispod, ovo NIJE dokaz AI korištenja
+    (`guard/traffic_meter.py`, WinDivert byte-counter za oba smjera).
+    Uređaj se crveno označava "SUMNJIVO" ako je **posjetio AI/DoH
+    domenu** (vrijedi i kad je promet ~0, jer je zahtjev blokiran) ILI
+    ako mu je promet daleko iznad ostalih - vidi ograničenje ispod, ovo
+    NIJE dokaz AI korištenja
   - **Severity bojanje** (tri razine): tamnoplavo + "!!" za pokušaj
     zaobilaženja DNS-a preko poznatog DoH/DoT resolvera (`doh_providers`
     u blocklist.yaml - vidi ispod), opečeno crveno + "!" za potvrđenu AI
@@ -180,10 +189,14 @@ python -m guard.main devices
 
 ## Održavanje blocklist-e
 
-`config/blocklist.yaml` - dodaj domenu ili ključnu riječ i pokreni
-ponovno (nema potrebe za izmjenom koda). Keyword match hvata i nove/
-nepoznate poddomene, ali može false-positive-ati (npr. "llama" je i ime
-životinje) - tretiraj alert kao naznaku, ne kao presudu.
+`config/blocklist.yaml` - dodaj domenu, ključnu riječ ili cijeli TLD i
+pokreni ponovno (nema potrebe za izmjenom koda). Keyword match hvata i
+nove/nepoznate poddomene, ali može false-positive-ati (npr. "llama" je
+i ime životinje) - tretiraj alert kao naznaku, ne kao presudu.
+
+`blocked_tlds` blokira cijeli vršni domenu - po defaultu `.ai`, koja se
+gotovo isključivo koristi za AI proizvode, pa je za natjecanje bez AI-a
+razumno blokirati je u cjelini (računa se kao "confirmed").
 
 ## Sljedeći koraci (roadmap)
 
