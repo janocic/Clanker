@@ -4,7 +4,7 @@ import argparse
 import threading
 import webbrowser
 
-from . import devices, hotspot
+from . import access_control, devices, hotspot
 from .blocklist import Blocklist
 from .dashboard_state import DashboardState
 from .dns_blocker import DNSBlocker
@@ -79,6 +79,15 @@ def cmd_hotspot_stop(args) -> None:
     print(out or err)
 
 
+def cmd_unblock_all(args) -> None:
+    before = sorted(access_control.list_blocked())
+    n = access_control.unblock_all()
+    print(f"[guard] Uklonjeno {n} guard-block firewall pravila.")
+    if before:
+        print("[guard] Bili blokirani IP-evi: " + ", ".join(before))
+    print("[guard] Sad blokirano: " + (", ".join(sorted(access_control.list_blocked())) or "nista"))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="guard", description="CTF AI-blokada: DNS proxy i monitoring")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -101,6 +110,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_hp = sub.add_parser("hotspot-stop", help="Zaustavi hosted network hotspot")
     p_hp.set_defaults(func=cmd_hotspot_stop)
+
+    p_ua = sub.add_parser("unblock-all", help="Ukloni sva guard-block firewall pravila (Administrator)")
+    p_ua.set_defaults(func=cmd_unblock_all)
 
     return parser
 

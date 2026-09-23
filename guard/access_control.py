@@ -47,7 +47,11 @@ def _query_blocked() -> set[str]:
         if line.startswith("Rule Name:"):
             current_is_ours = line.split(":", 1)[1].strip().startswith(RULE_PREFIX)
         elif current_is_ours and line.startswith("RemoteIP:"):
-            blocked.add(line.split(":", 1)[1].strip())
+            # netsh normalizes a single IP to CIDR form, e.g.
+            # "192.168.5.254/32" - strip the mask so it matches the plain
+            # IP used everywhere else (otherwise every block/unblock check
+            # fails and the rule looks "not applied" even when it was).
+            blocked.add(line.split(":", 1)[1].strip().split("/")[0])
     return blocked
 
 
@@ -102,6 +106,29 @@ def unblock_ip(ip: str) -> None:
     name_in, name_out = _rule_names(ip)
     _run(["netsh", "advfirewall", "firewall", "delete", "rule", f"name={name_in}"])
     _run(["netsh", "advfirewall", "firewall", "delete", "rule", f"name={name_out}"])
+
+
+def _guard_rule_names() -> set[str]:
+    out = _run(["netsh", "advfirewall", "firewall", "show", "rule", "name=all"]).stdout
+    names: set[str] = set()
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("Rule Name:"):
+            name = line.split(":", 1)[1].strip()
+            if name.startswith(RULE_PREFIX):
+                names.add(name)
+    return names
+
+
+def unblock_all() -> int:
+    """Remove every guard-block firewall rule (a clean slate). Returns
+    how many distinct rule names were deleted. Needs Administrator."""
+    names = _guard_rule_names()
+    for name in names:
+        # delete by name removes all rules sharing that name, incl. dupes
+        _run(["netsh", "advfirewall", "firewall", "delete", "rule", f"name={name}"])
+    refresh_now()
+    return len(names)
 
 
 def list_blocked() -> set[str]:
