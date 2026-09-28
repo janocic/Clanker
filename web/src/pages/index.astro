@@ -24,8 +24,10 @@
 
         <nav class="nav">
           <button class="nav-item active" data-view="overview">[ PREGLED ]</button>
-          <div class="nav-label">// UREDAJI</div>
-          <div id="device-nav"><span class="nav-empty">nema uredaja</span></div>
+          <div class="nav-label">// PRACENI</div>
+          <div id="device-nav" class="dropzone">
+            <span class="nav-empty">Povuci uredaj iz liste ovamo</span>
+          </div>
         </nav>
 
         <div class="robot-box">
@@ -60,7 +62,10 @@
       <div class="content">
         <header class="topbar">
           <div class="breadcrumb" id="breadcrumb">PREGLED</div>
-          <button class="theme-toggle" id="theme-toggle" title="Svijetla / tamna tema">TAMNO</button>
+          <div class="topbar-actions">
+            <button class="theme-toggle" id="autoname-toggle" title="Automatski pitaj za ime kad se novi uredaj spoji">AUTO-IME: ON</button>
+            <button class="theme-toggle" id="theme-toggle" title="Svijetla / tamna tema">TAMNO</button>
+          </div>
         </header>
 
         <main id="view-overview">
@@ -201,7 +206,7 @@
 
     <div id="nick-modal" class="modal-overlay" hidden>
       <div class="modal term">
-        <div class="modal-title">Preimenuj uredaj</div>
+        <div class="modal-title" id="nick-modal-title">Preimenuj uredaj</div>
         <div class="modal-sub mono-dim" id="nick-modal-sub">--</div>
         <input type="text" id="nick-input" maxlength="40" autocomplete="off" spellcheck="false"
           placeholder="npr. Marko - laptop (prazno = ukloni)" />
@@ -246,10 +251,12 @@
       const deviceStatRate = document.getElementById("device-stat-rate")!;
 
       const themeToggle = document.getElementById("theme-toggle")!;
+      const autonameToggle = document.getElementById("autoname-toggle")!;
       const robotEl = document.getElementById("robot")!;
       const robotCaption = document.getElementById("robot-caption")!;
 
       const nickModal = document.getElementById("nick-modal")!;
+      const nickModalTitle = document.getElementById("nick-modal-title")!;
       const nickModalSub = document.getElementById("nick-modal-sub")!;
       const nickInput = document.getElementById("nick-input") as HTMLInputElement;
       const nickSaveBtn = document.getElementById("nick-save")!;
@@ -294,6 +301,50 @@
       let lastQueries: QueryEntry[] = [];
       let selectedIp: string | null = null;
       let expandedIp: string | null = null;
+      let isDragging = false; // pause table re-render mid-drag so a drop isn't lost
+
+      // ---------- tracked ("praceni") sidebar watchlist (per-MAC, localStorage) ----------
+      // The sidebar is a curated watchlist the operator builds by dragging
+      // devices in from the table - it does NOT auto-populate. Stored per
+      // browser; wrapped in try/catch since storage can be unavailable.
+      const TRACK_KEY = "clanker-tracked";
+      let trackedMacs = new Set<string>();
+      function loadTracked() {
+        try {
+          const raw = localStorage.getItem(TRACK_KEY);
+          if (raw) trackedMacs = new Set(JSON.parse(raw));
+        } catch {}
+      }
+      function saveTracked() {
+        try {
+          localStorage.setItem(TRACK_KEY, JSON.stringify([...trackedMacs]));
+        } catch {}
+      }
+      function trackMac(mac: string) {
+        if (!mac || mac === "?") return;
+        trackedMacs.add(mac.toLowerCase());
+        saveTracked();
+        renderAll();
+      }
+      function untrackMac(mac: string) {
+        trackedMacs.delete(mac.toLowerCase());
+        saveTracked();
+        renderAll();
+      }
+      loadTracked();
+
+      // ---------- auto-name new devices ----------
+      // On a NEW device appearing (first seen after load) the operator is
+      // prompted to name it. We can't hook the WiFi auth moment on Windows,
+      // so "new" = first time the device shows up in /api/devices.
+      const AUTONAME_KEY = "clanker-autoname";
+      let autoName = true;
+      try {
+        autoName = localStorage.getItem(AUTONAME_KEY) !== "off";
+      } catch {}
+      let knownMacs = new Set<string>();
+      let firstDeviceLoad = true;
+      const newDeviceQueue: string[] = []; // IPs awaiting a name prompt
 
       // ---------- helpers ----------
       function showToast(message: string, isError: boolean) {
@@ -485,17 +536,23 @@
       }
 
       function renderDeviceNav(devices: Device[]) {
-        if (devices.length === 0) {
-          deviceNavEl.innerHTML = `<span class="nav-empty">nema uredaja</span>`;
+        // Sidebar shows ONLY devices the operator dragged in (tracked),
+        // not every connected device. Empty by default.
+        const tracked = sortDevicesBySeverity(devices.filter((d) => trackedMacs.has(d.mac.toLowerCase())));
+        if (tracked.length === 0) {
+          deviceNavEl.innerHTML = `<span class="nav-empty">Povuci uredaj iz liste ovamo</span>`;
           return;
         }
-        deviceNavEl.innerHTML = sortDevicesBySeverity(devices)
+        deviceNavEl.innerHTML = tracked
           .map((d) => {
             const dot = d.networkBlocked || d.suspicious ? "dot-danger" : "dot-ok";
             const active = d.ip === selectedIp ? "active" : "";
-            return `<button class="nav-item device-nav-item ${active}" data-ip="${d.ip}">
-              <span class="nav-dot ${dot}"></span><span class="nav-name">${deviceLabel(d)}</span>
-            </button>`;
+            return `<div class="nav-row">
+              <button class="nav-item device-nav-item ${active}" data-ip="${d.ip}">
+                <span class="nav-dot ${dot}"></span><span class="nav-name">${deviceLabel(d)}</span>
+              </button>
+              <button class="nav-untrack" data-untrack-mac="${d.mac}" title="Makni iz pracenih">&times;</button>
+            </div>`;
           })
           .join("");
       }
@@ -572,12 +629,15 @@
             const isExpanded = d.ip === expandedIp;
             const expandIcon = isExpanded ? "▾" : "▸";
             const ipSub = d.nickname ? `<div class="ip-sub mono-dim">${d.ip}</div>` : "";
+            const tracked = d.mac && d.mac !== "?" && trackedMacs.has(d.mac.toLowerCase());
+            const dragAttrs = d.mac && d.mac !== "?" ? `draggable="true" data-drag-mac="${d.mac}"` : "";
+            const trackMark = tracked ? `<span class="track-mark" title="U pracenima">★</span>` : "";
 
             let row = `
-              <tr class="${rowClass}">
+              <tr class="${rowClass} ${tracked ? "is-tracked" : ""}" ${dragAttrs} title="Povuci u lijevi panel za pracenje">
                 <td><button class="expand-toggle" data-ip="${d.ip}" title="Prikazi/sakrij log">${expandIcon}</button></td>
                 <td class="ip-cell">
-                  <button class="device-ip-link" data-ip="${d.ip}">${deviceLabel(d)}</button>
+                  ${trackMark}<button class="device-ip-link" data-ip="${d.ip}">${deviceLabel(d)}</button>
                   <button class="nick-edit" data-ip="${d.ip}" title="Preimenuj">&#9998;</button>
                   ${ipSub}
                 </td>
@@ -636,7 +696,9 @@
 
         renderBarChartPanel(devices);
         renderAreaChartPanel(devices);
-        renderDevicesTable(devices);
+        // Don't rebuild the table mid-drag - it would cancel the drag and
+        // lose the drop.
+        if (!isDragging) renderDevicesTable(devices);
 
         restoreAllPanelScroll();
       }
@@ -732,6 +794,7 @@
           ]);
           lastDevices = await devicesRes.json();
           lastQueries = await queriesRes.json();
+          detectNewDevices(lastDevices);
           renderAll();
           checkRobot(lastQueries);
           liveDot.classList.remove("dot-error");
@@ -847,18 +910,29 @@
           openNickModal(nickEditBtn.dataset.ip!);
           return;
         }
+
+        const untrackBtn = target.closest(".nav-untrack[data-untrack-mac]") as HTMLButtonElement | null;
+        if (untrackBtn) {
+          untrackMac(untrackBtn.dataset.untrackMac!);
+          return;
+        }
       });
 
       // ---------- nickname modal ----------
       let nickModalMac = "";
+      let nickModalConnect = false; // opened by the auto-prompt (queue) vs manual
 
-      function openNickModal(ip: string) {
+      function openNickModal(ip: string, connectMode = false) {
         const d = lastDevices.find((x) => x.ip === ip);
         if (!d || !d.mac || d.mac === "?") {
-          showToast("Nema MAC adrese za ovaj uredaj.", true);
+          if (!connectMode) showToast("Nema MAC adrese za ovaj uredaj.", true);
+          if (connectMode) processNewDeviceQueue();
           return;
         }
         nickModalMac = d.mac;
+        nickModalConnect = connectMode;
+        nickModalTitle.textContent = connectMode ? "Novi uredaj se spojio - imenuj" : "Preimenuj uredaj";
+        nickCancelBtn.textContent = connectMode ? "Preskoci" : "Odustani";
         nickModalSub.textContent = `${d.ip} · ${d.mac}`;
         nickInput.value = d.nickname || "";
         nickModal.hidden = false;
@@ -869,6 +943,11 @@
       function closeNickModal() {
         nickModal.hidden = true;
         nickModalMac = "";
+        const wasConnect = nickModalConnect;
+        nickModalConnect = false;
+        nickCancelBtn.textContent = "Odustani";
+        // If this was an auto-prompt, move on to the next queued new device.
+        if (wasConnect) processNewDeviceQueue();
       }
 
       async function saveNick() {
@@ -900,6 +979,79 @@
       });
       nickModal.addEventListener("click", (e) => {
         if (e.target === nickModal) closeNickModal();
+      });
+
+      // ---------- new-device detection + name-prompt queue ----------
+      function detectNewDevices(devices: Device[]) {
+        for (const d of devices) {
+          const mac = (d.mac || "").toLowerCase();
+          if (!mac || mac === "?") continue;
+          if (knownMacs.has(mac)) continue;
+          knownMacs.add(mac);
+          if (firstDeviceLoad) continue; // don't prompt for devices already connected at startup
+          if (!autoName) continue;
+          if (d.nickname) continue; // already named
+          if (!newDeviceQueue.includes(d.ip)) newDeviceQueue.push(d.ip);
+        }
+        firstDeviceLoad = false;
+        processNewDeviceQueue();
+      }
+
+      function processNewDeviceQueue() {
+        if (!nickModal.hidden) return; // a modal is already open
+        const ip = newDeviceQueue.shift();
+        if (!ip) return;
+        const d = lastDevices.find((x) => x.ip === ip);
+        if (!d || d.nickname || !d.mac || d.mac === "?") {
+          processNewDeviceQueue(); // stale entry, skip to next
+          return;
+        }
+        openNickModal(ip, true);
+      }
+
+      // ---------- auto-name toggle ----------
+      function applyAutoName() {
+        autonameToggle.textContent = autoName ? "AUTO-IME: ON" : "AUTO-IME: OFF";
+        autonameToggle.classList.toggle("off", !autoName);
+        try {
+          localStorage.setItem(AUTONAME_KEY, autoName ? "on" : "off");
+        } catch {}
+      }
+      applyAutoName();
+      autonameToggle.addEventListener("click", () => {
+        autoName = !autoName;
+        if (!autoName) newDeviceQueue.length = 0; // stop pending prompts
+        applyAutoName();
+      });
+
+      // ---------- drag devices from the table into the tracked sidebar ----------
+      document.body.addEventListener("dragstart", (e) => {
+        const row = (e.target as HTMLElement).closest("tr[data-drag-mac]") as HTMLElement | null;
+        if (!row || !e.dataTransfer) return;
+        isDragging = true;
+        e.dataTransfer.setData("text/plain", row.dataset.dragMac!);
+        e.dataTransfer.effectAllowed = "copy";
+      });
+      document.body.addEventListener("dragend", () => {
+        isDragging = false;
+      });
+      deviceNavEl.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+        deviceNavEl.classList.add("drag-over");
+      });
+      deviceNavEl.addEventListener("dragleave", () => {
+        deviceNavEl.classList.remove("drag-over");
+      });
+      deviceNavEl.addEventListener("drop", (e) => {
+        e.preventDefault();
+        deviceNavEl.classList.remove("drag-over");
+        isDragging = false;
+        const mac = e.dataTransfer?.getData("text/plain");
+        if (mac) {
+          trackMac(mac);
+          showToast("Uredaj dodan u pracene", false);
+        }
       });
 
       // ---------- theme toggle ----------
@@ -1957,6 +2109,77 @@
       .toast-error {
         color: var(--danger);
         border-color: var(--danger-dim);
+      }
+
+      /* ---------- tracked sidebar + drag/drop + auto-name ---------- */
+      .topbar-actions {
+        display: flex;
+        gap: 8px;
+        flex-shrink: 0;
+      }
+
+      .theme-toggle.off {
+        color: var(--text-dim);
+        border-color: var(--border);
+      }
+
+      #device-nav.dropzone {
+        min-height: 44px;
+        border: 1px dashed transparent;
+        border-radius: 6px;
+        padding: 2px;
+        transition: border-color 0.15s ease, background 0.15s ease;
+      }
+
+      #device-nav.dropzone.drag-over {
+        border-color: var(--accent);
+        background: rgba(168, 121, 10, 0.1);
+      }
+
+      .nav-row {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+      }
+
+      .nav-row .device-nav-item {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .nav-untrack {
+        flex-shrink: 0;
+        background: transparent;
+        border: none;
+        color: var(--text-dim);
+        cursor: pointer;
+        font-size: 16px;
+        line-height: 1;
+        padding: 4px 8px;
+        border-radius: 4px;
+      }
+
+      .nav-untrack:hover {
+        color: var(--danger);
+        background: rgba(161, 58, 42, 0.12);
+      }
+
+      tr[data-drag-mac] {
+        cursor: grab;
+      }
+
+      tr[data-drag-mac]:active {
+        cursor: grabbing;
+      }
+
+      tbody tr.is-tracked {
+        box-shadow: inset 3px 0 0 var(--accent);
+      }
+
+      .track-mark {
+        color: var(--accent);
+        margin-right: 4px;
+        font-size: 12px;
       }
 
       @media (max-width: 900px) {
