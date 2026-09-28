@@ -29,7 +29,7 @@ def cmd_dns(args) -> None:
 
     from .api import create_app
 
-    app = create_app(state, bl, meter, nicks)
+    app = create_app(state, bl, meter, nicks, blocker=blocker)
     url = f"http://127.0.0.1:{WEB_PORT}"
 
     def _run_api():

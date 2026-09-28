@@ -1,0 +1,2 @@
+# Development / test dependencies (not needed to run guard itself).
+pytest>=8.0.0

@@ -36,6 +36,9 @@ class DNSBlocker:
     def __init__(self, blocklist: Blocklist | None = None):
         self.blocklist = blocklist or Blocklist()
         self._running = False
+        # True only while the capture loop is actively intercepting udp/53.
+        # Lets the operator be warned if filtering stops mid-event.
+        self._healthy = False
         self._log_lock = threading.Lock()
         self._handle: pydivert.WinDivert | None = None
         LOG_PATH.parent.mkdir(exist_ok=True)
@@ -45,39 +48,77 @@ class DNSBlocker:
             with LOG_PATH.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")
 
+    def is_running(self) -> bool:
+        """True only while the filter loop is actively intercepting udp/53.
+        Goes False if the loop exits unexpectedly (e.g. a driver error), so
+        the operator can be warned that DNS filtering stopped mid-event."""
+        return self._healthy
+
+    def decide(self, qname: str, src_addr: str) -> tuple[bool, dict | None]:
+        """Pure per-packet decision (no WinDivert calls): classify the query
+        and build its log entry. Returns (reinject, log_entry).
+
+        Isolated from the socket loop so it can be unit-tested without the
+        driver. On any classify error it fails open - returns (True, None) -
+        so the packet is re-injected and the loop keeps serving instead of
+        the whole blocker dying on one query.
+        """
+        try:
+            verdict = self.blocklist.classify(qname)
+        except Exception:
+            return True, None  # fail open: let it through, keep serving
+        entry = {
+            "ts": time.time(),
+            "client_ip": src_addr,
+            "client_mac": mac_for_ip(src_addr),
+            "qname": qname.rstrip("."),
+            "blocked": verdict.blocked,
+            "reason": verdict.reason,
+            "severity": verdict.severity,
+        }
+        return (not verdict.blocked), entry
+
     def serve_forever(self) -> None:
         self._running = True
-        with pydivert.WinDivert(FILTER) as w:
-            self._handle = w
-            while self._running:
-                try:
-                    packet = w.recv()
-                except OSError:
-                    break
+        try:
+            with pydivert.WinDivert(FILTER) as w:
+                self._handle = w
+                self._healthy = True
+                while self._running:
+                    try:
+                        packet = w.recv()
+                    except OSError:
+                        if not self._running:
+                            break  # intentional shutdown: stop() closed the handle
+                        # Unexpected: the handle died under us. Stop cleanly
+                        # and stay unhealthy so the operator is warned that
+                        # filtering stopped, rather than tight-looping on a
+                        # dead handle.
+                        self._running = False
+                        break
 
-                try:
-                    request = DNSRecord.parse(bytes(packet.payload))
-                    qname = str(request.q.qname)
-                except Exception:
-                    w.send(packet)
-                    continue
+                    try:
+                        request = DNSRecord.parse(bytes(packet.payload))
+                        qname = str(request.q.qname)
+                    except Exception:
+                        w.send(packet)
+                        continue
 
-                verdict = self.blocklist.classify(qname)
-                if not verdict.blocked:
-                    w.send(packet)  # let ICS resolve it normally
-
-                self._log(
-                    {
-                        "ts": time.time(),
-                        "client_ip": packet.src_addr,
-                        "client_mac": mac_for_ip(packet.src_addr),
-                        "qname": qname.rstrip("."),
-                        "blocked": verdict.blocked,
-                        "reason": verdict.reason,
-                        "severity": verdict.severity,
-                    }
-                )
-        self._handle = None
+                    reinject, entry = self.decide(qname, packet.src_addr)
+                    if reinject:
+                        w.send(packet)  # let ICS resolve it normally
+                    if entry is not None:
+                        # Logging must never take the blocker down - a full
+                        # disk or ARP hiccup should lose a line, not stop it.
+                        try:
+                            self._log(entry)
+                        except Exception:
+                            pass
+        finally:
+            # Whether we exited on shutdown or a driver error, filtering is no
+            # longer running - reflect that so the dashboard can show it.
+            self._healthy = False
+            self._handle = None
 
     def start_background(self) -> threading.Thread:
         t = threading.Thread(target=self.serve_forever, daemon=True)

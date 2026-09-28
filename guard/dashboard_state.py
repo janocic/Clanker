@@ -45,10 +45,14 @@ class DashboardState:
                     continue
                 try:
                     entry = json.loads(line)
-                except json.JSONDecodeError:
+                    client_ip = entry["client_ip"]
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    # Skip a corrupt or partially-written line rather than
+                    # let it kill the tailer thread (which would freeze the
+                    # whole dashboard for the rest of the event).
                     continue
                 self.recent.appendleft(entry)
-                stat = self.stats[entry["client_ip"]]
+                stat = self.stats[client_ip]
                 stat["total"] += 1
                 stat["mac"] = entry.get("client_mac", "?")
                 if entry.get("blocked"):
@@ -62,7 +66,12 @@ class DashboardState:
 
     def run_forever(self, interval: float = 0.5) -> None:
         while True:
-            self.poll()
+            try:
+                self.poll()
+            except Exception:
+                # A transient read error (file rotated/locked, etc.) must not
+                # permanently kill the tailer - retry on the next tick.
+                pass
             time.sleep(interval)
 
     def start_background(self, interval: float = 0.5) -> threading.Thread:

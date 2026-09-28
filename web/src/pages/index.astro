@@ -51,6 +51,10 @@
           <span class="brand-dot" id="live-dot"></span>
           <span id="clock">--:--:--</span>
         </div>
+
+        <div class="sidebar-status filter-status" id="filter-status" title="Radi li DNS filtriranje">
+          DNS filtriranje: <b id="filter-state">--</b>
+        </div>
       </aside>
 
       <div class="content">
@@ -214,6 +218,8 @@
       const deviceQueriesBody = document.getElementById("device-queries-body")!;
       const clockEl = document.getElementById("clock")!;
       const liveDot = document.getElementById("live-dot")!;
+      const filterStatus = document.getElementById("filter-status")!;
+      const filterState = document.getElementById("filter-state")!;
 
       const statDevices = document.getElementById("stat-devices")!;
       const statTotal = document.getElementById("stat-total")!;
@@ -710,15 +716,29 @@
         renderAll();
       }
 
+      // Operator MUST know if DNS filtering has stopped mid-competition.
+      function updateFilterStatus(up: boolean) {
+        filterState.textContent = up ? "aktivno" : "STALO!";
+        filterStatus.classList.toggle("down", !up);
+      }
+
       // ---------- data polling ----------
       async function refresh() {
         try {
-          const [devicesRes, queriesRes] = await Promise.all([fetch("/api/devices"), fetch("/api/queries")]);
+          const [devicesRes, queriesRes, healthRes] = await Promise.all([
+            fetch("/api/devices"),
+            fetch("/api/queries"),
+            fetch("/api/health"),
+          ]);
           lastDevices = await devicesRes.json();
           lastQueries = await queriesRes.json();
           renderAll();
           checkRobot(lastQueries);
           liveDot.classList.remove("dot-error");
+          try {
+            const health = await healthRes.json();
+            updateFilterStatus(health.blockerUp !== false);
+          } catch {}
         } catch {
           liveDot.classList.add("dot-error");
         }
@@ -1161,6 +1181,23 @@
         border-top: 1px solid var(--border);
         font-size: 13px;
         color: var(--text-dim);
+      }
+
+      /* DNS-filter health line: sits right under the clock, no double border. */
+      .filter-status {
+        border-top: none;
+        padding-top: 0;
+      }
+      .filter-status #filter-state {
+        color: var(--accent);
+      }
+      .filter-status.down {
+        color: var(--danger);
+        font-weight: 700;
+        animation: pulse 1.2s ease-in-out infinite;
+      }
+      .filter-status.down #filter-state {
+        color: var(--danger);
       }
 
       .brand-dot {

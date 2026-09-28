@@ -46,9 +46,19 @@ def create_app(
     blocklist: Blocklist,
     traffic_meter: TrafficMeter | None = None,
     nicknames: Nicknames | None = None,
+    blocker=None,
 ) -> Flask:
     app = Flask(__name__, static_folder=str(WEB_DIST), static_url_path="")
     nicks = nicknames or Nicknames()
+
+    @app.get("/api/health")
+    def api_health():
+        # blockerUp=false means the DNS filter loop is no longer intercepting
+        # (driver died / never started) - the operator must know filtering
+        # stopped. Unknown (no blocker wired in) reports up to avoid a false
+        # alarm.
+        up = blocker.is_running() if blocker is not None else True
+        return jsonify({"blockerUp": bool(up)})
 
     @app.get("/")
     def index():

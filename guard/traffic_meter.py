@@ -71,7 +71,16 @@ class TrafficMeter:
         return None
 
     def _capture_loop(self) -> None:
-        with pydivert.WinDivert(FILTER) as w:
+        # PASSIVE (SNIFF): the meter only *counts* bytes, it never blocks or
+        # modifies anything, so it opens a sniffing handle that copies packets
+        # without removing them from the stack. A diverting handle would force
+        # every hotspot packet through this Python loop and re-inject it, so
+        # any stall here would degrade the whole network for all players;
+        # sniffing decouples metering from live traffic entirely (worst case
+        # of a sniff failure is just "no traffic numbers", never a slowdown),
+        # and means there is no packet to re-inject.
+        flags = pydivert.Flag.SNIFF | pydivert.Flag.RECV_ONLY
+        with pydivert.WinDivert(FILTER, flags=flags) as w:
             self._handle = w
             while self._running:
                 try:
@@ -80,9 +89,13 @@ class TrafficMeter:
                     break
                 client = self._client_ip(packet.src_addr, packet.dst_addr)
                 if client is not None:
+                    # len(packet.raw) is the packet's byte length with no copy
+                    # (len(packet.raw.tobytes()) would copy the whole packet
+                    # just to measure it). Computed outside the lock to keep
+                    # the critical section minimal.
+                    size = len(packet.raw)
                     with self._lock:
-                        self._byte_counts[client] += len(packet.raw.tobytes())
-                w.send(packet)
+                        self._byte_counts[client] += size
         self._handle = None
 
     def _sample_loop(self) -> None:

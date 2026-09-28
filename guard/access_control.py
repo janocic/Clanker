@@ -20,6 +20,10 @@ RULE_PREFIX = "guard-block-"
 # actual netsh call runs on a background timer instead - callers just
 # read the last cached result and never block on it.
 _REFRESH_INTERVAL_SECONDS = 3.0
+# `show rule name=all` can legitimately take a few seconds; cap it well
+# above that so a genuinely hung netsh can't freeze the background refresh
+# thread (leaving list_blocked() stale forever) or a block/unblock request.
+_RUN_TIMEOUT_SECONDS = 20.0
 _lock = threading.Lock()
 _cache: set[str] = set()
 _started = False
@@ -30,7 +34,21 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess:
     # system ANSI codepage: text=True alone picks the latter and can
     # crash on non-ASCII rule names/descriptions already present in
     # Windows' own default firewall rules (name=all lists everything).
-    return subprocess.run(cmd, capture_output=True, text=True, encoding="oem", errors="replace")
+    try:
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="oem",
+            errors="replace",
+            timeout=_RUN_TIMEOUT_SECONDS,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        # Degrade gracefully instead of hanging/crashing a caller: a timed-out
+        # query yields no rules (refresh keeps the last good cache), and a
+        # timed-out block/unblock is reported as "not applied" by the caller's
+        # verification step rather than raising out of a request handler.
+        return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr="")
 
 
 def _rule_names(ip: str) -> tuple[str, str]:
@@ -38,8 +56,10 @@ def _rule_names(ip: str) -> tuple[str, str]:
     return f"{base}-in", f"{base}-out"
 
 
-def _query_blocked() -> set[str]:
-    out = _run(["netsh", "advfirewall", "firewall", "show", "rule", "name=all"]).stdout
+def _parse_blocked_ips(out: str) -> set[str]:
+    """Pull the remote IPs out of `netsh ... show rule name=all` output,
+    considering only our own guard-block rules. Pure (text in, set out) so
+    it can be unit-tested against captured netsh output."""
     blocked: set[str] = set()
     current_is_ours = False
     for line in out.splitlines():
@@ -53,6 +73,11 @@ def _query_blocked() -> set[str]:
             # fails and the rule looks "not applied" even when it was).
             blocked.add(line.split(":", 1)[1].strip().split("/")[0])
     return blocked
+
+
+def _query_blocked() -> set[str]:
+    out = _run(["netsh", "advfirewall", "firewall", "show", "rule", "name=all"]).stdout
+    return _parse_blocked_ips(out)
 
 
 def refresh_now() -> set[str]:

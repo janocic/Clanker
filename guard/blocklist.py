@@ -78,14 +78,21 @@ class Blocklist:
         domain = domain.strip().lower().rstrip(".")
         with self._lock:
             if domain and domain not in self.live_domains:
-                self.live_domains.append(domain)
+                # Replace the list rather than mutate it in place: classify()
+                # grabs a reference to this list under the lock but iterates
+                # it *after* releasing the lock, so an in-place .append() here
+                # could raise "list changed size during iteration" and kill
+                # the DNS blocker thread. Copy-on-write keeps every published
+                # list immutable, matching reload()'s whole-list swap.
+                self.live_domains = self.live_domains + [domain]
                 self._save_live()
 
     def remove_live_domain(self, domain: str) -> None:
         domain = domain.strip().lower().rstrip(".")
         with self._lock:
             if domain in self.live_domains:
-                self.live_domains.remove(domain)
+                # Copy-on-write (see add_live_domain) - never mutate in place.
+                self.live_domains = [d for d in self.live_domains if d != domain]
                 self._save_live()
 
     def snapshot(self) -> dict:
